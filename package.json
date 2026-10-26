@@ -1,0 +1,14 @@
+{
+  "name": "harvestiq",
+  "version": "1.0.0",
+  "private": true,
+  "description": "HARVESTIQ - multi-source energy harvesting and self-cleaning monitoring dashboard",
+  "type": "module",
+  "scripts": {
+    "start": "node serve.mjs",
+    "build": "node build.mjs",
+    "pretest": "node build.mjs",
+    "test": "node --test \"test/*.test.js\""
+  },
+  "engines": { "node": ">=20" }
+}

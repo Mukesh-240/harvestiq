@@ -1,0 +1,194 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light">
+<title>HARVESTIQ</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%23285C43'/%3E%3Cpath d='M16 4 27 10v12L16 28 5 22V10z' fill='none' stroke='%23FAFAF6' stroke-width='1.8'/%3E%3Cpath d='M17.5 8.5 11 17h4.6l-1.4 6.5L21 14.8h-4.4z' fill='%23E8AD45'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body data-mode="live" data-link="NO_CONNECTION">
+<div id="fileWarn" class="notice crit file-warn" hidden>
+  <span><b>HARVESTIQ cannot start from a double-clicked file.</b> Browsers block the app's modules on <code>file://</code>. Use <b>dist/harvestiq.html</b> (single file, works anywhere) or run <b>start.bat</b> and open <b>http://localhost:8080</b>.</span>
+</div>
+<noscript><div class="notice crit">HARVESTIQ needs JavaScript.</div></noscript>
+<div id="bootError" class="notice crit file-warn" hidden></div>
+
+<div id="app">
+  <div id="simBanner" class="sim-banner" role="status" hidden></div>
+
+  <header class="nav">
+    <a class="brand" href="#overview" aria-label="HARVESTIQ overview">
+      <svg class="mark" viewBox="0 0 32 32" aria-hidden="true"><path d="M16 2.5 28.5 9.7v14.6L16 31.5 3.5 24.3V9.7z" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M17.6 7.5 10 17.4h5.2l-1.6 7.6L22 14.2h-5z" fill="#E8AD45"/></svg>
+      <span>HARVESTIQ</span>
+    </a>
+
+    <nav class="mainnav" aria-label="Sections">
+      <a href="#overview" data-nav="overview" aria-current>Overview</a>
+      <a href="#sensors" data-nav="sensors">Sensor health</a>
+      <a href="#diagnostics" data-nav="diagnostics">Diagnostics</a>
+      <a href="#cleaning" data-nav="cleaning">Cleaning</a>
+      <a href="#performance" data-nav="performance">Performance</a>
+      <button id="btnReport" class="navbtn" title="Print-friendly session report">Session report</button>
+    </nav>
+
+    <div class="seg" role="group" aria-label="Data source">
+      <button data-mode-btn="live" aria-pressed="true">LIVE</button>
+      <button data-mode-btn="demo" aria-pressed="false">DEMO</button>
+    </div>
+
+    <div class="linkblock">
+      <div id="linkBadge"></div>
+      <small id="lastData">No valid data received yet</small>
+    </div>
+
+    <div class="actions">
+      <div id="health"></div>
+      <button data-action="connect" class="btn primary">Connect ESP32</button>
+      <button data-action="disconnect" class="btn" hidden>Disconnect</button>
+      <button id="btnCsv" class="btn ghost" title="Export session data as CSV">CSV</button>
+      <button id="btnSettings" class="btn ghost" title="Thresholds and piezo setting">Settings</button>
+    </div>
+  </header>
+
+  <section id="demoBar" class="demobar" hidden aria-label="Demo controls">
+    <div class="demo-row">
+      <b class="demo-label" title="Deterministic software simulations - never hardware results">DEMO SCENARIO</b>
+      <select id="scenarioSelect" class="scn-select" aria-label="Scenario selector"></select>
+      <button id="demoToggle" class="btn primary">Start</button>
+      <button id="demoReset" class="btn">Reset</button>
+      <div id="speedButtons" class="seg small" role="group" aria-label="Simulation speed">
+        <button data-speed="1" aria-pressed="true">1x</button>
+        <button data-speed="2" aria-pressed="false">2x</button>
+        <button data-speed="4" aria-pressed="false">4x</button>
+      </div>
+      <div class="demo-run">
+        <div class="progress" id="demoProgress" aria-hidden="true"><i></i></div>
+        <span id="demoStatus"></span>
+      </div>
+    </div>
+    <div class="demo-row"><p id="demoBlurb" class="demo-blurb"></p></div>
+  </section>
+
+  <div id="serialWarn" class="notice crit" hidden>This browser has no Web Serial support. Open HARVESTIQ in Chrome or Edge on a laptop to connect the ESP32. Demo mode works in any browser.</div>
+  <div id="notice" class="notice" hidden><span id="noticeText"></span><button id="noticeClose" class="x" aria-label="Dismiss">&times;</button></div>
+
+  <main>
+    <section id="overview" class="hero">
+      <div class="hero-copy">
+        <p class="eyebrow">Solar &middot; wind &middot; piezo &middot; self-cleaning</p>
+        <h1>Intelligence for every unit of harvested energy.</h1>
+        <p class="lede">Monitor generation, identify abnormal conditions, and verify self-cleaning performance.</p>
+        <div class="hero-status"><span id="heroLink"></span><small id="heroLast"></small></div>
+        <nav id="pipeline" class="pipeline" aria-label="Sense, diagnose, act, verify"></nav>
+      </div>
+      <div class="hero-art">
+        <div id="heroScene" class="hero-scene"></div>
+      </div>
+    </section>
+
+    <section id="summary" class="summary" aria-label="Live power summary"></section>
+
+    <section id="cards" class="cards" aria-label="Energy sources"></section>
+
+    <section id="sensors" class="panel health-panel" aria-label="Sensor health center">
+      <div class="panel-h">
+        <h2>Sensor health center</h2>
+        <div id="healthSummary" class="hsum"></div>
+        <span class="hint">Each channel is judged on its own evidence. A live stream never makes a sensor healthy by itself.</span>
+      </div>
+      <div id="healthGrid" class="health-grid"></div>
+    </section>
+
+    <section id="diagnostics" class="split">
+      <div class="panel diag-panel">
+        <div class="panel-h"><h2>Active diagnostics</h2><span class="hint" id="diagCount"></span></div>
+        <ul id="diagList" class="diag-list"></ul>
+      </div>
+      <div class="panel serial-panel">
+        <div class="panel-h"><h2>Serial connection</h2><span class="hint">Connection health, parser health and sensor health are separate</span></div>
+        <div id="serialPanel"></div>
+        <div class="serial-actions"><button data-action="connect" class="btn primary">Connect ESP32</button><button data-action="disconnect" class="btn" hidden>Disconnect</button></div>
+      </div>
+    </section>
+
+    <section id="cleaning" class="split">
+      <div class="panel verify-panel">
+        <div class="panel-h"><h2>Cleaning cycle and verification</h2><span class="hint">Solar output before vs after each ESP32-reported cycle. The browser never starts the cleaner.</span></div>
+        <div id="verifyBody"></div>
+      </div>
+      <div class="panel timeline-panel">
+        <div class="panel-h"><h2>Event timeline</h2><span class="hint" id="timelineCount"></span></div>
+        <ol id="timelineList" class="timeline"></ol>
+      </div>
+    </section>
+
+    <section id="performance" class="panel charts-panel">
+      <div class="panel-h">
+        <h2>Performance</h2>
+        <div id="rangeButtons" class="seg small" role="group" aria-label="Time range">
+          <button data-range="120000" aria-pressed="true">2 min</button>
+          <button data-range="600000" aria-pressed="false">10 min</button>
+          <button data-range="all" aria-pressed="false">Session</button>
+        </div>
+      </div>
+      <div class="chart-grid">
+        <figure><figcaption>Power output <small>mW - wind is an estimate</small></figcaption><div class="chart" id="chartPower"></div></figure>
+        <figure><figcaption>Solar current <small>mA - shaded = cleaning / cooldown</small></figcaption><div class="chart" id="chartCurrent"></div></figure>
+        <figure><figcaption>Ambient light <small>LDR raw, lower = brighter</small></figcaption><div class="chart" id="chartLight"></div></figure>
+        <figure><figcaption>Battery voltage <small>V - not a charge gauge</small></figcaption><div class="chart" id="chartBattery"></div></figure>
+      </div>
+    </section>
+
+    <details id="console" class="panel console">
+      <summary>Serial console <span id="consoleStats"></span></summary>
+      <div id="consoleLines" class="console-lines"></div>
+    </details>
+  </main>
+
+  <footer class="foot">
+    HARVESTIQ observes the ESP32; the ESP32 owns motor timing and control. Low solar current does not prove a dirty panel, battery % and wind/piezo energy are estimates, and before/after results show association, not causation.
+  </footer>
+</div>
+
+<dialog id="settingsDialog" class="dialog">
+  <form id="settingsForm" method="dialog">
+    <h2>Settings</h2>
+    <p class="dialog-note">Values mirror the firmware. If you recalibrate the sketch, update them here. Saved in this browser.</p>
+    <label class="check"><input type="checkbox" name="piezo"> Piezo discs attached <small>Match <code>PIEZO_CONNECTED true</code> in the sketch. The firmware JSON does not report this.</small></label>
+    <label>Low-output limit (mA) <small>Match <code>DIRTY_MA</code></small><input type="number" name="dirtyMa" step="0.1" min="0.1"></label>
+    <label>Telemetry stale after (s) <small>Firmware sends ~1 line per second</small><input type="number" name="staleSec" step="0.5" min="2"></label>
+    <label>Verification: significant change (mA) <small>Absolute change needed</small><input type="number" name="absMa" step="0.1" min="0.1"></label>
+    <label>Verification: significant change (%) <small>And relative change needed</small><input type="number" name="relPct" step="1" min="1"></label>
+    <label>Verification: settling time after cleaning (s) <small>Wait before collecting "after" readings</small><input type="number" name="settleSec" step="0.5" min="0"></label>
+    <label>Consecutive valid readings to count as recovered <small>Applies to sensor diagnostics</small><input type="number" name="recoverN" step="1" min="1"></label>
+    <label>Light change that voids a comparison (LDR counts) <small>Uncalibrated sensor; tune on the bench</small><input type="number" name="lightRaw" step="10" min="50"></label>
+    <p id="settingsError" class="dialog-error" role="alert"></p>
+    <div class="dialog-actions"><button type="button" id="settingsCancel" class="btn">Cancel</button><button type="submit" class="btn primary">Save</button></div>
+  </form>
+</dialog>
+
+<div id="reportView" class="report-view" hidden>
+  <div class="report-bar"><b>Session report</b><span><button id="reportPrint" class="btn primary">Print / Save as PDF</button> <button id="reportClose" class="btn">Close</button></span></div>
+  <div id="reportBody"></div>
+</div>
+
+<script>
+  /* Classic (non-module) script: still runs when module loading is blocked on file:// */
+  (function () {
+    if (location.protocol === 'file:' && window.__HARVESTIQ_BUNDLED__ !== true) {
+      document.getElementById('fileWarn').hidden = false;
+    }
+  })();
+  /* If the app throws before it finishes starting, say so instead of looking dead. */
+  window.addEventListener('error', function (e) {
+    if (window.__harvestiq) return;
+    var box = document.getElementById('bootError');
+    box.textContent = 'HARVESTIQ failed to start: ' + (e.message || 'unknown error') + (e.filename ? ' (' + e.filename.split('/').pop() + ':' + e.lineno + ')' : '') + '. Try dist/harvestiq.html in Chrome or Edge.';
+    box.hidden = false;
+  });
+</script>
+<script type="module" src="src/ui/app.js"></script>
+</body>
+</html>

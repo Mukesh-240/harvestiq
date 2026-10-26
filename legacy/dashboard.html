@@ -1,0 +1,368 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Harvester Monitor</title>
+<style>
+  :root {
+    --bg: #f4f5f2;
+    --card: #ffffff;
+    --ink: #1b1f1a;
+    --muted: #6b7268;
+    --line: #dfe3dc;
+    --solar: #d98e04;
+    --wind: #2a7fb8;
+    --piezo: #8a4fc7;
+    --ok: #2f8f4e;
+    --warn: #c25a12;
+    --bad: #c2321f;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #121512;
+      --card: #1b1f1b;
+      --ink: #e8ece6;
+      --muted: #949b91;
+      --line: #2c322c;
+      --solar: #f0aa2a;
+      --wind: #5aaee6;
+      --piezo: #b585ec;
+      --ok: #56c27a;
+      --warn: #ee8a45;
+      --bad: #ee6a55;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font: 15px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  header {
+    display: flex; flex-wrap: wrap; gap: 12px;
+    align-items: center; justify-content: space-between;
+    padding: 18px 20px; border-bottom: 1px solid var(--line);
+  }
+  h1 { margin: 0; font-size: 19px; letter-spacing: -0.01em; }
+  .sub { color: var(--muted); font-size: 13px; }
+  .controls { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  button {
+    font: inherit; font-weight: 600; padding: 8px 14px; border-radius: 8px;
+    border: 1px solid var(--line); background: var(--card); color: var(--ink); cursor: pointer;
+  }
+  button.primary { background: var(--ink); color: var(--bg); border-color: var(--ink); }
+  button:disabled { opacity: 0.45; cursor: default; }
+  .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--muted); display: inline-block; margin-right: 6px; }
+  .dot.live { background: var(--ok); box-shadow: 0 0 0 4px color-mix(in srgb, var(--ok) 25%, transparent); }
+  main { padding: 20px; max-width: 1200px; margin: 0 auto; display: grid; gap: 16px; }
+  .grid { display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 16px; }
+  .card h2 {
+    margin: 0 0 10px; font-size: 12px; font-weight: 700; text-transform: uppercase;
+    letter-spacing: 0.08em; color: var(--muted); display: flex; justify-content: space-between; align-items: center;
+  }
+  .big { font-size: 34px; font-weight: 700; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; }
+  .unit { font-size: 15px; color: var(--muted); font-weight: 500; margin-left: 4px; }
+  .rows { margin-top: 8px; display: grid; gap: 3px; font-variant-numeric: tabular-nums; }
+  .rows div { display: flex; justify-content: space-between; color: var(--muted); }
+  .rows b { color: var(--ink); font-weight: 600; }
+  .pill { font-size: 11px; font-weight: 700; padding: 3px 8px; border-radius: 99px; letter-spacing: 0.04em; background: var(--line); color: var(--muted); }
+  .pill.on { color: #fff; }
+  .solar .pill.on { background: var(--solar); }
+  .wind .pill.on { background: var(--wind); }
+  .piezo .pill.on { background: var(--piezo); }
+  .solar .big { color: var(--solar); }
+  .wind .big { color: var(--wind); }
+  .piezo .big { color: var(--piezo); }
+  .bar { height: 12px; background: var(--line); border-radius: 99px; overflow: hidden; margin-top: 10px; }
+  .bar > span { display: block; height: 100%; width: 0; background: var(--ok); transition: width 0.4s; }
+  .status { font-size: 24px; font-weight: 700; }
+  .status.CLEAN { color: var(--ok); }
+  .status.CHECKING, .status.COOLDOWN { color: var(--warn); }
+  .status.CLEANING { color: var(--bad); }
+  .status.NIGHT { color: var(--muted); }
+  .flash { animation: flash 0.5s; }
+  @keyframes flash { from { background: color-mix(in srgb, var(--piezo) 25%, var(--card)); } to { background: var(--card); } }
+  canvas { width: 100%; height: 220px; display: block; }
+  .legend { display: flex; gap: 16px; font-size: 13px; color: var(--muted); margin-bottom: 6px; }
+  .legend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 5px; vertical-align: -1px; }
+  pre {
+    margin: 0; max-height: 220px; overflow: auto; font: 12px/1.4 ui-monospace, Menlo, Consolas, monospace;
+    color: var(--muted); white-space: pre-wrap;
+  }
+  .msg { padding: 12px 16px; border-radius: 10px; border: 1px solid var(--warn); color: var(--warn); display: none; }
+  details summary { cursor: pointer; color: var(--muted); font-weight: 600; }
+  @media (max-width: 520px) { header, main { padding: 16px; } .big { font-size: 28px; } }
+</style>
+</head>
+<body>
+<header>
+  <div>
+    <h1>Multi-Energy Harvester</h1>
+    <div class="sub"><span id="dot" class="dot"></span><span id="conn">Not connected</span></div>
+  </div>
+  <div class="controls">
+    <button id="btnConnect" class="primary">Connect ESP32</button>
+    <button id="btnDisconnect" disabled>Disconnect</button>
+    <button id="btnDemo">Demo data</button>
+  </div>
+</header>
+
+<main>
+  <div id="msg" class="msg"></div>
+
+  <div class="grid">
+    <section class="card solar">
+      <h2>Solar <span id="solarPill" class="pill">IDLE</span></h2>
+      <div><span id="smW" class="big">0.0</span><span class="unit">mW</span></div>
+      <div class="rows">
+        <div>Voltage <b id="sV">0.00 V</b></div>
+        <div>Current <b id="smA">0.0 mA</b></div>
+        <div>Light <b id="light">—</b></div>
+      </div>
+    </section>
+
+    <section class="card wind">
+      <h2>Wind <span id="windPill" class="pill">IDLE</span></h2>
+      <div><span id="wmW" class="big">0.00</span><span class="unit">mW</span></div>
+      <div class="rows">
+        <div>Voltage <b id="wV">0.00 V</b></div>
+      </div>
+    </section>
+
+    <section class="card piezo" id="piezoCard">
+      <h2>Piezo footsteps <span id="piezoPill" class="pill">WAITING</span></h2>
+      <div><span id="steps" class="big">0</span><span class="unit">steps</span></div>
+      <div class="rows">
+        <div>Cap voltage <b id="cV">0.00 V</b></div>
+        <div>Energy <b id="puJ">0.0 µJ</b></div>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>Battery</h2>
+      <div><span id="bPct" class="big">0</span><span class="unit">%</span></div>
+      <div class="bar"><span id="bBar"></span></div>
+      <div class="rows">
+        <div>Voltage <b id="bV">0.00 V</b></div>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>Panel cleaner</h2>
+      <div id="panel" class="status CLEAN">—</div>
+      <div class="rows">
+        <div>Cleaning cycles <b id="cycles">0</b></div>
+        <div>LDR raw <b id="ldr">0</b></div>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>Energy harvested</h2>
+      <div class="rows">
+        <div>Solar <b id="smWh">0.0000 mWh</b></div>
+        <div>Wind <b id="wmWh">0.0000 mWh</b></div>
+        <div>Piezo <b id="puJ2">0.0 µJ</b></div>
+      </div>
+    </section>
+  </div>
+
+  <section class="card">
+    <h2>Live power (last 2 min)</h2>
+    <div class="legend">
+      <span><i style="background:var(--solar)"></i>Solar mW</span>
+      <span><i style="background:var(--wind)"></i>Wind mW</span>
+    </div>
+    <canvas id="chart"></canvas>
+  </section>
+
+  <section class="card">
+    <details>
+      <summary>Raw serial output</summary>
+      <pre id="log"></pre>
+    </details>
+  </section>
+</main>
+
+<script>
+const $ = id => document.getElementById(id);
+const HISTORY = 120;
+const solarHist = [], windHist = [];
+let port = null, reader = null, pipeDone = null, demoTimer = null, lastSteps = null;
+const logLines = [];
+
+function showMsg(text) { $('msg').textContent = text; $('msg').style.display = text ? 'block' : 'none'; }
+function setConn(live, text) { $('dot').className = 'dot' + (live ? ' live' : ''); $('conn').textContent = text; }
+
+function pill(el, on, onText, offText) {
+  el.textContent = on ? onText : offText;
+  el.classList.toggle('on', on);
+}
+
+function update(d) {
+  $('sV').textContent = d.sV.toFixed(2) + ' V';
+  $('smA').textContent = d.smA.toFixed(1) + ' mA';
+  $('smW').textContent = d.smW.toFixed(1);
+  $('light').textContent = d.light + ' (' + d.ldr + ')';
+  pill($('solarPill'), d.smA > 1, 'CHARGING', d.ina ? 'IDLE' : 'NO INA219');
+
+  $('wV').textContent = d.wV.toFixed(2) + ' V';
+  $('wmW').textContent = d.wmW.toFixed(2);
+  pill($('windPill'), d.wV > 0.3, 'GENERATING', 'IDLE');
+
+  $('steps').textContent = d.steps;
+  $('cV').textContent = d.cV.toFixed(2) + ' V';
+  $('puJ').textContent = d.puJ.toFixed(1) + ' µJ';
+  if (lastSteps !== null && d.steps > lastSteps) {
+    const c = $('piezoCard'); c.classList.remove('flash'); void c.offsetWidth; c.classList.add('flash');
+    pill($('piezoPill'), true, 'STEP!', 'WAITING');
+    setTimeout(() => pill($('piezoPill'), false, 'STEP!', 'WAITING'), 600);
+  }
+  lastSteps = d.steps;
+
+  $('bV').textContent = d.bV.toFixed(2) + ' V';
+  $('bPct').textContent = d.bPct;
+  $('bBar').style.width = d.bPct + '%';
+
+  const panelText = {
+    CLEAN: 'Clean', CHECKING: 'Low output — checking', CLEANING: 'Dirty → cleaning',
+    COOLDOWN: 'Cleaned, re-checking', NIGHT: 'Night — idle'
+  };
+  $('panel').textContent = panelText[d.panel] || d.panel;
+  $('panel').className = 'status ' + d.panel;
+  $('cycles').textContent = d.cycles;
+  $('ldr').textContent = d.ldr;
+
+  $('smWh').textContent = d.smWh.toFixed(4) + ' mWh';
+  $('wmWh').textContent = d.wmWh.toFixed(4) + ' mWh';
+  $('puJ2').textContent = d.puJ.toFixed(1) + ' µJ';
+
+  solarHist.push(d.smW); windHist.push(d.wmW);
+  if (solarHist.length > HISTORY) { solarHist.shift(); windHist.shift(); }
+  drawChart();
+}
+
+function drawChart() {
+  const cv = $('chart'), dpr = window.devicePixelRatio || 1;
+  const w = cv.clientWidth, h = cv.clientHeight;
+  cv.width = w * dpr; cv.height = h * dpr;
+  const ctx = cv.getContext('2d'); ctx.scale(dpr, dpr);
+  const css = getComputedStyle(document.documentElement);
+  const pad = { l: 44, r: 10, t: 10, b: 20 };
+  const max = Math.max(5, ...solarHist, ...windHist) * 1.15;
+
+  ctx.strokeStyle = css.getPropertyValue('--line'); ctx.fillStyle = css.getPropertyValue('--muted');
+  ctx.font = '11px system-ui'; ctx.lineWidth = 1;
+  for (let i = 0; i <= 4; i++) {
+    const y = pad.t + (h - pad.t - pad.b) * i / 4;
+    ctx.beginPath(); ctx.moveTo(pad.l, y); ctx.lineTo(w - pad.r, y); ctx.stroke();
+    ctx.fillText((max * (1 - i / 4)).toFixed(max < 20 ? 1 : 0), 4, y + 4);
+  }
+  const line = (data, color) => {
+    if (data.length < 2) return;
+    ctx.strokeStyle = color; ctx.lineWidth = 2; ctx.beginPath();
+    data.forEach((v, i) => {
+      const x = pad.l + (w - pad.l - pad.r) * (i + HISTORY - data.length) / (HISTORY - 1);
+      const y = pad.t + (h - pad.t - pad.b) * (1 - v / max);
+      i ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
+    });
+    ctx.stroke();
+  };
+  line(solarHist, css.getPropertyValue('--solar'));
+  line(windHist, css.getPropertyValue('--wind'));
+}
+
+function handleLine(line) {
+  if (!line) return;
+  if (line.startsWith('{')) {
+    try { update(JSON.parse(line)); } catch (e) { /* partial line, skip */ }
+  } else {
+    logLines.push(line);
+    if (logLines.length > 200) logLines.shift();
+    $('log').textContent = logLines.join('\n');
+  }
+}
+
+async function connect() {
+  if (!('serial' in navigator)) {
+    showMsg('This browser cannot read USB serial. Open this page in Chrome or Edge on a laptop/desktop.');
+    return;
+  }
+  stopDemo();
+  try {
+    port = await navigator.serial.requestPort();
+    await port.open({ baudRate: 115200 });
+  } catch (e) {
+    showMsg(e.name === 'NotFoundError' ? '' :
+      'Could not open the port. Close the Arduino IDE Serial Monitor (only one program can use the port) and try again.');
+    port = null; return;
+  }
+  showMsg(''); setConn(true, 'Live from ESP32');
+  $('btnConnect').disabled = true; $('btnDisconnect').disabled = false;
+
+  const decoder = new TextDecoderStream();
+  pipeDone = port.readable.pipeTo(decoder.writable).catch(() => {});
+  reader = decoder.readable.getReader();
+  let buf = '';
+  try {
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buf += value;
+      const lines = buf.split('\n'); buf = lines.pop();
+      lines.forEach(l => handleLine(l.trim()));
+    }
+  } catch (e) {
+    showMsg('Connection lost. Check the USB cable, then press Connect again.');
+  }
+  await disconnect();
+}
+
+async function disconnect() {
+  try { if (reader) await reader.cancel(); } catch (e) {}
+  try { if (pipeDone) await pipeDone; } catch (e) {}
+  try { if (port) await port.close(); } catch (e) {}
+  reader = null; port = null; pipeDone = null;
+  setConn(false, 'Not connected');
+  $('btnConnect').disabled = false; $('btnDisconnect').disabled = true;
+}
+
+// Demo data so the page can be tested without hardware
+let demo = { t: 0, steps: 0, puJ: 0, smWh: 0, wmWh: 0, cycles: 0, bV: 3.7 };
+function demoTick() {
+  const t = ++demo.t;
+  const covered = (t % 40) > 28;
+  const smA = covered ? 1.2 : 18 + Math.random() * 4;
+  const sV = 5.2 + Math.random() * 0.4;
+  const wV = (t % 20) < 8 ? 1.2 + Math.random() * 0.8 : 0.05;
+  if (Math.random() < 0.3) { demo.steps++; demo.puJ += 40 + Math.random() * 30; }
+  demo.smWh += sV * smA / 3600; demo.wmWh += (wV * wV / 200 * 1000) / 3600;
+  if (t % 40 === 31) demo.cycles++;
+  demo.bV = Math.min(4.2, demo.bV + (covered ? 0 : 0.0005));
+  const panel = covered ? ((t % 40) < 31 ? 'CHECKING' : 'CLEANING') : 'CLEAN';
+  handleLine(JSON.stringify({
+    ldr: 900, light: 'BRIGHT', ina: 1, sV, smA, smW: sV * smA,
+    wV, wmW: wV > 0.3 ? wV * wV / 200 * 1000 : 0,
+    cV: 2 + Math.random(), steps: demo.steps, puJ: demo.puJ,
+    bV: demo.bV, bPct: Math.round((demo.bV - 3) / 1.2 * 100),
+    panel, cycles: demo.cycles, smWh: demo.smWh, wmWh: demo.wmWh
+  }));
+}
+function stopDemo() { if (demoTimer) { clearInterval(demoTimer); demoTimer = null; $('btnDemo').textContent = 'Demo data'; } }
+$('btnDemo').onclick = () => {
+  if (demoTimer) { stopDemo(); setConn(false, 'Not connected'); return; }
+  if (port) return;
+  demoTimer = setInterval(demoTick, 1000); demoTick();
+  $('btnDemo').textContent = 'Stop demo'; setConn(true, 'Demo data (not real)');
+};
+
+$('btnConnect').onclick = connect;
+$('btnDisconnect').onclick = disconnect;
+window.addEventListener('resize', drawChart);
+drawChart();
+if (!('serial' in navigator)) showMsg('This browser cannot read USB serial. Use Chrome or Edge on a laptop/desktop.');
+</script>
+</body>
+</html>
