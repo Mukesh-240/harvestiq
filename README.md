@@ -102,10 +102,14 @@ flowchart LR
     E --> F["✅ LIVE FROM ESP32<br/>in ~3 s"]
 ```
 
-1. In the Arduino IDE, install the **Adafruit INA219** library, open `firmware/multi_energy_harvester/multi_energy_harvester.ino` (firmware **v3.2**, piezo enabled), select **ESP32 Dev Module** and your port, and upload.
-2. **Close the Serial Monitor.** Only one program can hold the COM port at a time.
-3. Open HARVESTIQ, keep **LIVE** selected, click **Connect ESP32**, and pick the port.
-4. Opening the port resets the ESP32, so expect about 2 to 3 seconds of boot text before the first reading arrives.
+1. In the Arduino IDE, install the **Adafruit INA219** library, open `firmware/multi_energy_harvester/multi_energy_harvester.ino` (firmware **v3.2**: solar + wind + piezo), select **ESP32 Dev Module** and your port, and upload.
+2. Wait for **"Done uploading"**. If the IDE shows red errors, nothing was uploaded and the **old sketch keeps running**.
+3. Open the Serial Monitor at 115200 and confirm the new firmware is running:
+   - The header reads `SOLAR + WIND + PIEZO HARVESTER v3.2`.
+   - The JSON line contains `"pz":1`.
+4. **Close the Serial Monitor.** Only one program can hold the COM port at a time.
+5. Open HARVESTIQ, keep **LIVE** selected, click **Connect ESP32**, and pick the port.
+6. Opening the port resets the ESP32, so expect about 2 to 3 seconds of boot text before the first reading arrives.
 
 <details>
 <summary><b>🛠️ Troubleshooting the connection</b></summary>
@@ -120,7 +124,7 @@ flowchart LR
 | Connected but **NO DATA** | Baud must be 115200 and the sketch must be running. Press **EN** on the board and check the Serial console |
 | Lines marked malformed | A truncated line or `nan` from `printf`. These are harmless, ignored and counted |
 | Solar **DISCONNECTED** | The firmware reports `ina:0`. Check INA219 VCC, GND, SDA → GPIO21 and SCL → GPIO22 |
-| Piezo **NOT CONFIGURED** | The sketch has `PIEZO_CONNECTED false`. v3.2 ships with it `true`; re-upload v3.2. (Only with the old v3.1 do you also tick **Settings → Piezo attached**) |
+| Piezo **NOT CONFIGURED** | The board isn't sending `"pz":1`, which almost always means the **old sketch is still on it** (an older sketch, or an upload that failed with a compile error). Check the Serial console: v3.2 prints `SOLAR + WIND + PIEZO HARVESTER v3.2`. Re-upload v3.2 and wait for "Done uploading". Also make sure the dashboard is on **LIVE**, because demo scenario 1 shows NOT CONFIGURED on purpose |
 | Piezo steps never increase | See [Piezo tile: setup and calibration](#-piezo-tile-setup-and-calibration). Check the pin with `PIN_FINDER`, then tune `STEP_JUMP_V` |
 | Link drops | Keep the tab visible, check the cable, and press **Reconnect ESP32** |
 
@@ -405,7 +409,7 @@ Every status also carries a **confidence** label: **CONFIRMED** (proven by a fir
 - **LDR (light):** a dark room is not a failure. The channel becomes SUSPECTED only if it reads NIGHT for 20 s while the panel makes more than 10 mA. A reading pinned at the bright end, or identical for 5 minutes, is an UNDETERMINED warning and raises no alert.
 - **Wind:** zero output is HEALTHY ("generator output not detected", which is not the same as "no wind"). No reading for 3.5 s is STALE, and for 30 s is SUSPECTED. The value is generator voltage, **not wind speed**.
 - **Piezo:** NOT CONFIGURED unless enabled. Once enabled, quiet periods between footsteps are normal.
-- **Battery:** a missing reading is never "empty". An implausibly low reading (below 2 V) is SUSPECTED, which usually means the divider or battery is disconnected. CHARGING or DISCHARGING is shown only when the voltage trend supports it.
+- **Battery:** a missing reading is never "empty". An implausibly low reading (below 2 V) is SUSPECTED, which usually means the divider or battery is disconnected. CHARGING is shown when solar current is above 1 mA, deliberately higher than the sketch's 0.05 mA LED threshold, which is at noise level. Otherwise CHARGING or DISCHARGING is shown only when the voltage trend supports it.
 - **Stream vs parser vs sensors:** these are three separate health signals. A burst of malformed lines doesn't make the solar panel "faulty".
 
 </details>
@@ -490,16 +494,22 @@ the console and ignored by the parser).
 
 <br>
 
-| | v3.1 (`legacy/multi_energy_harvester_v3_1.ino`) | **v3.2** (`firmware/multi_energy_harvester/`) |
-|---|---|---|
-| Piezo | Off (`PIEZO_CONNECTED false`) | **On**, D32 |
-| Reports whether piezo is enabled | No: tick **Settings → Piezo attached** | **Yes**, `"pz"` flag, no checkbox needed |
-| Step counting | Jump between two 50 ms samples; press + release can count twice | Rise above a slow baseline, 400 ms lockout, 32-sample averaging |
-| INA219 check | Once at boot | Every 0.5 s, auto-recovers; a lost sensor blocks the cleaner |
-| NaN in JSON | Possible | Never |
-| Switches | — | `HUMAN_LOG`, `BOOT_SELF_TEST`, `PIN_FINDER` |
+v3.2 is built on the team's **solar + wind sketch**. It keeps that sketch's names, battery-only storage and settings,
+adds the piezo back, and fixes the problems below.
 
-Pins, wiring, JSON field names and the cleaning timings are identical, so the dashboard works with both versions.
+| | v3.1 (`legacy/multi_energy_harvester_v3_1.ino`) | Solar + wind sketch (no piezo) | **v3.2** (`firmware/multi_energy_harvester/`) |
+|---|---|---|---|
+| Serial header | `MULTI-ENERGY HARVESTER + CLEANER v3.1` | `SOLAR + WIND HARVESTER + CLEANER` | **`SOLAR + WIND + PIEZO HARVESTER v3.2`** |
+| Piezo | Off (`PIEZO_CONNECTED false`) | Removed (sends `cV`, `steps`, `puJ` as 0) | **On**, D32 |
+| Dashboard piezo status | NOT CONFIGURED unless **Settings → Piezo attached** is ticked | NOT CONFIGURED | **HEALTHY**: `"pz":1` turns it on automatically |
+| Step counting | Jump between two 50 ms samples; press + release can count twice | — | Rise above a slow baseline, 400 ms lockout, 32-sample averaging |
+| Storage | Battery or supercap | 18650 battery only (`BATT_PIN`) | 18650 battery only (`BATT_PIN`) |
+| Solar LED / "CHARGING" threshold | 1.0 mA | 0.05 mA | 0.05 mA (one INA219 step, so it can flicker on noise; the dashboard uses 1 mA) |
+| INA219 check | Once at boot | Once at boot | Every 0.5 s, auto-recovers; a lost sensor blocks the cleaner |
+| NaN in JSON | Possible | Possible | Never |
+| Switches | — | — | `HUMAN_LOG`, `BOOT_SELF_TEST`, `PIN_FINDER` |
+
+Pins, wiring, JSON field names and the cleaning timings are identical in all three, so the dashboard works with each of them.
 
 </details>
 
@@ -548,7 +558,7 @@ harvestiq/
 ├── test/                      140 node:test tests
 ├── firmware/
 │   └── multi_energy_harvester/
-│       └── multi_energy_harvester.ino   ESP32 sketch v3.2 (piezo on D32)
+│       └── multi_energy_harvester.ino   ESP32 sketch v3.2 (solar + wind + piezo on D32)
 ├── dist/harvestiq.html        single-file build: double-click to run
 ├── build.mjs                  bundler (~80 lines, no dependencies)
 ├── serve.mjs                  static server for localhost:8080
@@ -568,7 +578,7 @@ harvestiq/
 
 1. Open HARVESTIQ in LIVE mode with nothing connected. It must show **NOT CONNECTED** and no numbers at all.
 2. Plug in the ESP32, close the Serial Monitor, and click **Connect ESP32**. Within about 5 s the header should read **LIVE FROM ESP32**.
-3. Open the **Serial console** and confirm the JSON has the fields listed above.
+3. Open the **Serial console** and confirm the JSON has the fields listed above, including `"pz":1`, and that the header reads `SOLAR + WIND + PIEZO HARVESTER v3.2`.
 4. **Solar:** shine a lamp on the panel and check that the current rises. If it stays at 0 under a bright lamp, VIN+ and VIN- may be swapped (the firmware hides negative current).
 5. **Light:** cover the LDR and check for NIGHT, then shine a lamp and check for BRIGHT. Note the raw values, which should match `LDR_BRIGHT` and `LDR_NIGHT` in the sketch.
 6. **Wind:** blow on the propeller. The voltage should go above 0.3 V and the turbine in the scene should spin.
