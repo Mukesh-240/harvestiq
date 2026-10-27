@@ -138,7 +138,7 @@ export class SensorHealthMonitor {
     const h = cfg.health;
     if (!sample || !isAvailable(sample.battery)) return { state: 'UNKNOWN', why: 'No valid battery voltage.' };
     if (isAvailable(sample.solar) && sample.solar.currentmA > cfg.firmware.solarOnMa) {
-      return { state: 'CHARGING', why: `Solar current ${fmt(sample.solar.currentmA)} mA is flowing into the charger (the sketch's own charging criterion).` };
+      return { state: 'CHARGING', why: `Solar current ${fmt(sample.solar.currentmA)} mA is flowing into the charger (above the dashboard's ${fmt(cfg.firmware.solarOnMa)} mA charging threshold).` };
     }
     const win = this.#battery.filter((p) => p.t >= t - h.batteryTrendMs);
     if (win.length < 5 || win.at(-1).t - win[0].t < h.batteryTrendMs * 0.6) return { state: 'UNKNOWN', why: 'Not enough battery history to judge a trend.' };

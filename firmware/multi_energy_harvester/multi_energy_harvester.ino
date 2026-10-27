@@ -1,31 +1,28 @@
 // =====================================================
-//  MULTI-ENERGY HARVESTER + SELF-CLEANING  v3.2
-//  Drop-in upgrade of v3.1 for the HARVESTIQ dashboard.
-//  Same pins, same wiring, same cleaning logic, same JSON fields.
+//  SOLAR + WIND + PIEZO HARVESTER + SELF-CLEANING   v3.2
+//  For the HARVESTIQ dashboard (USB serial, 115200 baud)
+//  Solar   : real charging, measured by INA219
+//  Wind    : DC motor generator, measured across 200 ohm load
+//  Piezo   : footstep tile -> bridge -> 470uF cap -> divider -> D32
+//  Battery : 18650 voltage read through 100k/100k divider
+//  Cleaner : bright light BUT low solar current = dirty panel
+//            -> vibration motor runs a cleaning cycle via L298N
 //
-//  What is new in v3.2
-//   1. JSON reports "pz" (1 = piezo enabled), so the dashboard no longer
-//      needs the "Piezo attached" checkbox.
-//   2. INA219 is re-checked twice a second, not only at boot:
-//        - unplugged / lost I2C  -> "ina":0 within 0.5 s, cleaner is blocked
-//        - plugged back in       -> re-initialised automatically, "ina":1
-//      (v3.1 kept using the last values, and a dead INA219 reads 0 mA, which
-//       in bright light looked like a dirty panel and started cleaning.)
-//   3. NaN / inf can never reach the JSON line (it would be rejected as
-//      malformed by the dashboard).
-//   4. HUMAN_LOG and BOOT_SELF_TEST switches (below).
-//   5. Piezo ENABLED (discs on D32) with sturdier step counting:
-//        - a step = quick rise above a slow (~1 s) baseline, so a rise spread
-//          over two samples is still caught and ADC noise is averaged out
-//        - 400 ms lockout, so press + release of one footstep = ONE step
-//        - the log prints "peak rise" every second: tap the tile and set
-//          STEP_JUMP_V to about half of what you see
-//   6. PIN_FINDER switch: prints the spare analog pins every second, to find
-//      which pin the piezo is really wired to.
-//
+//  Improvements over the plain solar + wind sketch
+//   - INA219 re-checked every 0.5 s, not only at boot. A loose INA219 reads
+//     0 mA, which in bright light looked "dirty" and ran the motor for
+//     nothing. Now it reports ina:0, the cleaner is blocked, and the sensor
+//     is re-initialised automatically when it comes back.
+//   - Piezo: a step = quick rise above a slow (~1 s) baseline, with a 400 ms
+//     lockout so press + release of one footstep = ONE step. The log shows
+//     "peak rise" every second: tap the tile, set STEP_JUMP_V to ~half of it.
+//   - JSON sends "pz" (piezo enabled), so the dashboard needs no checkbox.
+//   - NaN / inf can never reach the JSON (the dashboard would drop the line).
+//   - Switches: HUMAN_LOG, BOOT_SELF_TEST, PIN_FINDER.
+//   - The firmware accepts NO incoming commands.
+// =====================================================
 //  Library: Sketch > Include Library > Manage Libraries
 //           search "Adafruit INA219" > Install (accept BusIO too)
-//  Serial:  115200 baud. The firmware accepts NO incoming commands.
 // =====================================================
 
 #include <Wire.h>
@@ -33,86 +30,80 @@
 
 #define FW_VERSION "3.2"
 
-// ---------- Output options ----------
+// ---------- Switches ----------
 const bool HUMAN_LOG      = true;   // false = JSON line only (quieter console)
 const bool BOOT_SELF_TEST = true;   // 1 s LED + motor test after every reset
                                     // (opening the dashboard's port resets the ESP32)
-const bool PIN_FINDER     = false;  // true = also print spare ADC pins (find the piezo wire)
+const bool PIN_FINDER     = false;  // true = also print spare analog pins (find the piezo wire)
 
 // ---------- Pins ----------
 #define LDR_PIN     34   // LDR module AO
 #define WIND_PIN    35   // wind divider node
-#define PIEZO_PIN   32   // piezo divider node
+#define BATT_PIN    33   // battery divider node
+#define PIEZO_PIN   32   // piezo divider node (change if PIN_FINDER shows another pin)
 #define CLEAN_PIN   25   // L298N IN1
 #define STATUS_LED  26   // on while cleaning
 #define SOLAR_LED   27
 #define WIND_LED    14
-#define PIEZO_LED   12
-// INA219: SDA = D21, SCL = D22 (ESP32 defaults)
+#define PIEZO_LED   12   // flashes on each step (harmless if no LED is fitted)
+// INA219: SDA = D21, SCL = D22
 
 // ---------- Light (LDR reads HIGH in dark, LOW in bright) ----------
-const int LDR_BRIGHT = 1500;   // below this = bright  (calibrate with RAW line)
+const int LDR_BRIGHT = 1500;   // below this = bright  (calibrate)
 const int LDR_NIGHT  = 3000;   // above this = night
 
 // ---------- Cleaner ----------
-const float DIRTY_MA        = 3.0;    // bright but solar below this = dirty
-const unsigned long CLEAN_MS    = 5000;   // motor run time per cycle
-const unsigned long COOLDOWN_MS = 8000;   // wait before re-checking
-const unsigned long DIRTY_CONFIRM_MS = 2000; // must stay dirty this long
+const float DIRTY_MA                 = 3.0;   // bright but solar below this = dirty
+const unsigned long CLEAN_MS         = 5000;  // motor run time per cycle
+const unsigned long COOLDOWN_MS      = 8000;  // wait before re-checking
+const unsigned long DIRTY_CONFIRM_MS = 2000;  // must stay dirty this long
 
-// ---------- Wind circuit ----------
+// ---------- Wind ----------
 // motor + -> 1N4007 -> 100R -> NODE -> 100R -> GND ; NODE -> D35
 const float WIND_DIV       = 2.0;
 const float WIND_LOAD_OHMS = 200.0;
 const float WIND_ON_V      = 0.30;
 
-// ---------- Piezo circuit ----------
+// ---------- Piezo ----------
 // piezo -> bridge (4x 1N4007) -> 470uF cap
 // cap + -> 100k -> NODE -> 22k -> GND ; NODE -> D32 ; 2 red LEDs in series NODE->GND (clamp)
+#define PIEZO_CONNECTED true                 // false = channel off (sent as pz:0)
 const float PIEZO_DIV   = (100.0 + 22.0) / 22.0;
-const float PIEZO_CAP_F = 470e-6;   // 470uF 63V
-const float STEP_JUMP_V = 0.08;     // rise (cap volts) that counts as a step.
-                                    // Tune: ~half the "peak rise" the log shows per tap
-const unsigned long STEP_LOCKOUT_MS = 400;  // one footstep (press + release) = one step
-const float PIEZO_BASE_FOLLOW = 0.05;       // baseline speed (~1 s at 50 ms samples)
-#define PIEZO_CONNECTED true         // discs attached; false = channel off (sent as pz:0)
-// Unused analog-capable pins that PIN_FINDER prints (not used by this build).
-const int SPARE_ADC_PINS[] = {32, 36, 39, 4, 13, 15};
+const float PIEZO_CAP_F = 470e-6;            // 470uF
+const float STEP_JUMP_V = 0.08;              // rise (cap volts) that counts as a step:
+                                             // ~half the "peak rise" one tap shows
+const unsigned long STEP_LOCKOUT_MS = 400;   // press + release of one footstep = one step
+const float PIEZO_BASE_FOLLOW = 0.05;        // baseline speed (~1 s at 50 ms samples)
+const int SPARE_ADC_PINS[] = {32, 36, 39, 4, 13, 15};   // printed by PIN_FINDER
 
 // ---------- Solar ----------
-const float SOLAR_ON_MA = 1.0;
-const unsigned long INA_PROBE_MS = 500;   // how often the INA219 is re-checked
+const float SOLAR_ON_MA = 0.05;              // LED / "CHARGING" threshold
+const unsigned long INA_PROBE_MS = 500;      // how often the INA219 is re-checked
 
-// ---------- Storage (18650 battery or supercap) ----------
-// storage + -> 100k -> NODE -> 100k -> GND ; NODE -> D33
-#define STORAGE_IS_BATTERY true   // false if you use a supercap
-#define SCAP_PIN 33
-const float SCAP_DIV    = 2.0;
-const float SCAP_F      = 1.0;   // set to your supercap's farads (e.g. 0.47)
-const float SCAP_FULL_V = 4.2;   // TP4056 stops here
-float scapV = 0, scapJ = 0;
+// ---------- Battery ----------
+// B+ -> 100k -> NODE -> 100k -> GND ; NODE -> D33
+const float BATT_DIV = 2.0;
 
 // ---------- State ----------
 Adafruit_INA219 ina;
 bool inaOk = false;
 
-float solar_mWh = 0, wind_mWh = 0, piezo_uJ = 0;
-unsigned long steps = 0;
-float piezoBaseV = 0;        // slow baseline of the capacitor voltage
-float piezoPeakRiseV = 0;    // largest rise above baseline since the last print
-unsigned long lastStepAt = 0;
-
-float solarV = 0, solarmA = 0, solarmW = 0;
-float windV = 0, windmW = 0;
-float capV = 0;
+float solarV = 0, solarmA = 0, solarmW = 0, solar_mWh = 0;
+float windV = 0, windmW = 0, wind_mWh = 0;
+float battV = 0;
+int   battPct = 0;
 int   ldrRaw = 0;
+
+float capV = 0, piezo_uJ = 0;
+float piezoBaseV = 0;          // slow baseline of the capacitor voltage
+float piezoPeakRiseV = 0;      // largest rise above baseline since the last print
+unsigned long steps = 0, lastStepAt = 0, piezoLedUntil = 0;
 
 enum CleanState { IDLE, CLEANING, COOLDOWN };
 CleanState cleanState = IDLE;
-unsigned long cleanStateSince = 0, dirtySince = 0;
-unsigned long cleanCycles = 0;
+unsigned long cleanStateSince = 0, dirtySince = 0, cleanCycles = 0;
 
-unsigned long lastSample = 0, lastPrint = 0, piezoLedUntil = 0, lastInaProbe = 0;
+unsigned long lastSample = 0, lastPrint = 0, lastInaProbe = 0;
 
 // (No default arguments: the Arduino IDE's auto-generated prototypes can choke on them.)
 float pinVoltsN(int pin, int samples) {
@@ -123,7 +114,50 @@ float pinVoltsN(int pin, int samples) {
 
 float pinVolts(int pin) { return pinVoltsN(pin, 8); }
 
-// PIEZO: a footstep charges the 470 uF cap a little; it then leaks away slowly
+const char* lightText() {
+  if (ldrRaw > LDR_NIGHT)  return "NIGHT";
+  if (ldrRaw < LDR_BRIGHT) return "BRIGHT";
+  return "DIM";
+}
+
+// True if something acknowledges the INA219 address (cheap, ~0.2 ms).
+bool inaPresent() {
+  Wire.beginTransmission(INA219_ADDRESS);
+  return Wire.endTransmission() == 0;
+}
+
+// Keeps inaOk true only while the INA219 is really there; re-initialises it when it returns.
+void checkIna(unsigned long now) {
+  if (now - lastInaProbe < INA_PROBE_MS) return;
+  lastInaProbe = now;
+
+  bool present = inaPresent();
+  if (inaOk && !present) {
+    inaOk = false;
+    Serial.println("!! INA219 LOST - solar reading unavailable, cleaner blocked");
+  } else if (!inaOk && present && ina.begin()) {
+    ina.setCalibration_16V_400mA();
+    inaOk = true;
+    Serial.println("INA219 detected - solar reading restored");
+  }
+}
+
+void readSolar(float dt_h) {
+  if (inaOk) {
+    solarV  = ina.getBusVoltage_V();
+    solarmA = ina.getCurrent_mA();
+    if (isnan(solarV) || isnan(solarmA) || isinf(solarV) || isinf(solarmA)) {
+      inaOk = false;                 // a bad read is treated like a lost sensor
+    } else {
+      if (solarmA < 0) solarmA = 0;
+      solarmW = solarV * solarmA;
+      solar_mWh += solarmW * dt_h;
+    }
+  }
+  if (!inaOk) { solarV = 0; solarmA = 0; solarmW = 0; }   // placeholders; ina:0 tells the dashboard
+}
+
+// A footstep charges the 470 uF cap a little; it then leaks away slowly
 // through the 122k divider (~1 min). A step is a QUICK rise above a slow baseline.
 void readPiezo(unsigned long now) {
   capV = pinVoltsN(PIEZO_PIN, 32) * PIEZO_DIV;   // 32 samples: the per-step rise is small
@@ -147,43 +181,10 @@ void readPiezo(unsigned long now) {
   }
 }
 
-const char* lightText() {
-  if (ldrRaw > LDR_NIGHT)  return "NIGHT";
-  if (ldrRaw < LDR_BRIGHT) return "BRIGHT";
-  return "DIM";
-}
-
-// Rough storage level: Li-ion 3.0 V = 0 %, 4.2 V = 100 %; supercap by energy.
-int storePercent() {
-  int pct = STORAGE_IS_BATTERY
-              ? (int)((scapV - 3.0) / (4.2 - 3.0) * 100.0)
-              : (int)(100.0 * (scapV * scapV) / (SCAP_FULL_V * SCAP_FULL_V));
-  if (pct < 0) pct = 0;
-  if (pct > 100) pct = 100;
-  return pct;
-}
-
-// True if something acknowledges the INA219 address (cheap, ~0.2 ms).
-bool inaPresent() {
-  Wire.beginTransmission(INA219_ADDRESS);
-  return Wire.endTransmission() == 0;
-}
-
-// Keeps "inaOk" true only while the INA219 is really there, and
-// re-initialises it when it comes back.
-void checkIna(unsigned long now) {
-  if (now - lastInaProbe < INA_PROBE_MS) return;
-  lastInaProbe = now;
-
-  bool present = inaPresent();
-  if (inaOk && !present) {
-    inaOk = false;
-    Serial.println("!! INA219 LOST - solar reading unavailable, cleaner blocked");
-  } else if (!inaOk && present && ina.begin()) {
-    ina.setCalibration_16V_400mA();
-    inaOk = true;
-    Serial.println("INA219 detected - solar reading restored");
-  }
+void setLeds(bool on) {
+  digitalWrite(SOLAR_LED, on);  digitalWrite(WIND_LED, on);
+  digitalWrite(PIEZO_LED, on);  digitalWrite(STATUS_LED, on);
+  digitalWrite(CLEAN_PIN, on);
 }
 
 void setup() {
@@ -191,7 +192,7 @@ void setup() {
   delay(300);
 
   pinMode(SOLAR_LED, OUTPUT);
-  pinMode(WIND_LED,  OUTPUT);
+  pinMode(WIND_LED, OUTPUT);
   pinMode(PIEZO_LED, OUTPUT);
   pinMode(STATUS_LED, OUTPUT);
   pinMode(CLEAN_PIN, OUTPUT);
@@ -203,18 +204,14 @@ void setup() {
   if (inaOk) ina.setCalibration_16V_400mA();
 
   Serial.println("=====================================");
-  Serial.println(" MULTI-ENERGY HARVESTER + CLEANER v" FW_VERSION);
+  Serial.println("  SOLAR + WIND + PIEZO HARVESTER v" FW_VERSION);
   Serial.println("=====================================");
   if (!inaOk) Serial.println("!! INA219 NOT FOUND - check SDA/SCL/VCC/GND");
 
-  if (BOOT_SELF_TEST) {
-    digitalWrite(SOLAR_LED, HIGH); digitalWrite(WIND_LED, HIGH);
-    digitalWrite(PIEZO_LED, HIGH); digitalWrite(STATUS_LED, HIGH);
-    digitalWrite(CLEAN_PIN, HIGH);
+  if (BOOT_SELF_TEST) {   // lamp + motor test (1 s)
+    setLeds(HIGH);
     delay(1000);
-    digitalWrite(SOLAR_LED, LOW);  digitalWrite(WIND_LED, LOW);
-    digitalWrite(PIEZO_LED, LOW);  digitalWrite(STATUS_LED, LOW);
-    digitalWrite(CLEAN_PIN, LOW);
+    setLeds(LOW);
   }
 
   piezoBaseV   = PIEZO_CONNECTED ? pinVoltsN(PIEZO_PIN, 32) * PIEZO_DIV : 0;  // no false step at boot
@@ -260,7 +257,7 @@ void runCleaner(unsigned long now) {
 
 void printHumanLog() {
   Serial.println("=====================================");
-  Serial.println(" MULTI-ENERGY HARVESTER + CLEANER v" FW_VERSION);
+  Serial.println("  SOLAR + WIND + PIEZO HARVESTER v" FW_VERSION);
   Serial.println("=====================================");
 
   Serial.printf("LIGHT : %s (LDR raw %d)\n", lightText(), ldrRaw);
@@ -274,7 +271,7 @@ void printHumanLog() {
   Serial.printf("WIND  : %.2f V  %.2f mW  %s\n",
                 windV, windmW, windV > WIND_ON_V ? "GENERATING" : "idle");
 
-  if (!PIEZO_CONNECTED) Serial.println("PIEZO : not attached yet");
+  if (!PIEZO_CONNECTED) Serial.println("PIEZO : not attached");
   else Serial.printf("PIEZO : cap %.2f V (D%d node %.3f V)  steps %lu  %.1f uJ  peak rise %.3f V (step if > %.2f)\n",
                      capV, PIEZO_PIN, capV / PIEZO_DIV, steps, piezo_uJ,
                      piezoPeakRiseV, STEP_JUMP_V);
@@ -286,15 +283,11 @@ void printHumanLog() {
     Serial.println();
   }
 
-  int pct = storePercent();
   char bar[11];
-  for (int i = 0; i < 10; i++) bar[i] = (i < pct / 10) ? '#' : '-';
+  for (int i = 0; i < 10; i++) bar[i] = (i < battPct / 10) ? '#' : '-';
   bar[10] = '\0';
-  if (STORAGE_IS_BATTERY)
-    Serial.printf("STORE : battery %.2f V  [%s] ~%d%%  %s\n", scapV, bar, pct,
-                  solarmA > SOLAR_ON_MA ? "charging" : "");
-  else
-    Serial.printf("STORE : supercap %.2f V  %.2f J  [%s] %d%%\n", scapV, scapJ, bar, pct);
+  Serial.printf("BATT  : %.2f V  [%s] ~%d%%  %s\n", battV, bar, battPct,
+                solarmA > SOLAR_ON_MA ? "charging" : "");
 
   Serial.print("PANEL : ");
   if (cleanState == CLEANING)      Serial.println("DIRTY -> CLEANING NOW");
@@ -305,8 +298,7 @@ void printHumanLog() {
   Serial.printf("        cleaning cycles: %lu\n", cleanCycles);
 
   Serial.println("------------- TOTALS ----------------");
-  Serial.printf("Solar %.4f mWh | Wind %.4f mWh | Piezo %.1f uJ\n",
-                solar_mWh, wind_mWh, piezo_uJ);
+  Serial.printf("Solar %.4f mWh | Wind %.4f mWh | Piezo %.1f uJ\n", solar_mWh, wind_mWh, piezo_uJ);
   Serial.println();
 }
 
@@ -328,7 +320,7 @@ void printJson() {
                 solarV, solarmA, solarmW,
                 windV, windmW,
                 capV, steps, piezo_uJ, PIEZO_CONNECTED ? 1 : 0,
-                scapV, storePercent(),
+                battV, battPct,
                 panel, cleanCycles,
                 solar_mWh, wind_mWh);
 }
@@ -336,6 +328,7 @@ void printJson() {
 void loop() {
   unsigned long now = millis();
 
+  // ---------- Sampling every 50 ms ----------
   if (now - lastSample >= 50) {
     float dt_h = (now - lastSample) / 3600000.0;
     lastSample = now;
@@ -343,21 +336,11 @@ void loop() {
     // LIGHT
     ldrRaw = analogRead(LDR_PIN);
 
-    // SOLAR (INA219 is re-checked every INA_PROBE_MS)
+    // SOLAR (INA219 re-checked every INA_PROBE_MS)
     checkIna(now);
-    if (inaOk) {
-      solarV  = ina.getBusVoltage_V();
-      solarmA = ina.getCurrent_mA();
-      if (isnan(solarV) || isnan(solarmA) || isinf(solarV) || isinf(solarmA)) inaOk = false;
-      else {
-        if (solarmA < 0) solarmA = 0;
-        solarmW = solarV * solarmA;
-        solar_mWh += solarmW * dt_h;
-      }
-    }
-    if (!inaOk) { solarV = 0; solarmA = 0; solarmW = 0; }   // placeholders, ina:0 tells the dashboard
+    readSolar(dt_h);
 
-    // WIND
+    // WIND  (P = V^2 / R)
     windV  = pinVolts(WIND_PIN) * WIND_DIV;
     windmW = (windV * windV / WIND_LOAD_OHMS) * 1000.0;
     if (windV < WIND_ON_V) windmW = 0;
@@ -365,11 +348,10 @@ void loop() {
 
     // PIEZO (skipped when not attached, so noise can't fake steps)
     if (PIEZO_CONNECTED) readPiezo(now);
-    else capV = 0;
 
-    // STORAGE voltage (battery or supercap)
-    scapV = pinVolts(SCAP_PIN) * SCAP_DIV;
-    scapJ = 0.5 * SCAP_F * scapV * scapV;
+    // BATTERY  (3.0 V = 0%, 4.2 V = 100%)
+    battV   = pinVolts(BATT_PIN) * BATT_DIV;
+    battPct = constrain((int)((battV - 3.0) / (4.2 - 3.0) * 100.0), 0, 100);
 
     // CLEANER
     runCleaner(now);
@@ -380,6 +362,7 @@ void loop() {
     digitalWrite(PIEZO_LED, now < piezoLedUntil   ? HIGH : LOW);
   }
 
+  // ---------- Print every 1 s ----------
   if (now - lastPrint >= 1000) {
     lastPrint = now;
     if (HUMAN_LOG) printHumanLog();

@@ -19,7 +19,7 @@ export const DEFAULT_CONFIG = deepFreeze({
     ldrBright: 1500, // LDR raw below this = BRIGHT (LDR reads HIGH in the dark)
     ldrNight: 3000,
     dirtyMa: 3.0, // bright light + solar below this = firmware "dirty"
-    solarOnMa: 1.0,
+    solarOnMa: 1.0, // dashboard CHARGING threshold; deliberately above the sketch LED threshold (0.05 mA = 1 INA219 step, noise-level)
     windOnV: 0.3,
     windLoadOhms: 200,
     battEmptyV: 3.0,
