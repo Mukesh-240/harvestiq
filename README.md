@@ -17,7 +17,7 @@
 ![Web Serial](https://img.shields.io/badge/Web_Serial-Chrome_%7C_Edge-4285F4?style=flat-square&logo=googlechrome&logoColor=white)
 ![JavaScript](https://img.shields.io/badge/Vanilla_JS-ES_modules-F7DF1E?style=flat-square&logo=javascript&logoColor=black)
 ![Dependencies](https://img.shields.io/badge/dependencies-0-2F5D46?style=flat-square)
-![Tests](https://img.shields.io/badge/tests-139_passing-3C8D5A?style=flat-square&logo=nodedotjs&logoColor=white)
+![Tests](https://img.shields.io/badge/tests-140_passing-3C8D5A?style=flat-square&logo=nodedotjs&logoColor=white)
 ![Offline](https://img.shields.io/badge/works-offline-6B8F71?style=flat-square)
 ![License](https://img.shields.io/badge/license-MIT-blue?style=flat-square)
 
@@ -72,7 +72,8 @@ The laptop dashboard follows one loop:
 
 ### Option A: try it right now (no hardware)
 
-👉 **[Open the live demo](https://mukesh-240.github.io/harvestiq/?demo=9)**, then pick any scenario and press **Start**.
+👉 **[Open the live demo](https://mukesh-240.github.io/harvestiq/?demo=9)** (mirror: **[harvestiq-fawn.vercel.app](https://harvestiq-fawn.vercel.app)**), then pick any scenario and press **Start**.
+Both links can also connect to a real ESP32 plugged into the same computer.
 
 ### Option B: run it locally
 
@@ -94,14 +95,14 @@ cd harvestiq
 
 ```mermaid
 flowchart LR
-    A["📥 Upload<br/>firmware/multi_energy_harvester.ino"] --> B["❌ Close Arduino<br/>Serial Monitor"]
+    A["📥 Upload<br/>firmware/multi_energy_harvester/"] --> B["❌ Close Arduino<br/>Serial Monitor"]
     B --> C["🌐 Open HARVESTIQ<br/>in Chrome / Edge"]
     C --> D["🔌 Click<br/>Connect ESP32"]
     D --> E["🎯 Pick the COM port<br/>(CP210x / CH340)"]
     E --> F["✅ LIVE FROM ESP32<br/>in ~3 s"]
 ```
 
-1. In the Arduino IDE, install the **Adafruit INA219** library, select your ESP32 board, and upload `firmware/multi_energy_harvester.ino`.
+1. In the Arduino IDE, install the **Adafruit INA219** library, open `firmware/multi_energy_harvester/multi_energy_harvester.ino` (firmware **v3.2**, piezo enabled), select **ESP32 Dev Module** and your port, and upload.
 2. **Close the Serial Monitor.** Only one program can hold the COM port at a time.
 3. Open HARVESTIQ, keep **LIVE** selected, click **Connect ESP32**, and pick the port.
 4. Opening the port resets the ESP32, so expect about 2 to 3 seconds of boot text before the first reading arrives.
@@ -119,7 +120,8 @@ flowchart LR
 | Connected but **NO DATA** | Baud must be 115200 and the sketch must be running. Press **EN** on the board and check the Serial console |
 | Lines marked malformed | A truncated line or `nan` from `printf`. These are harmless, ignored and counted |
 | Solar **DISCONNECTED** | The firmware reports `ina:0`. Check INA219 VCC, GND, SDA → GPIO21 and SCL → GPIO22 |
-| Piezo **NOT CONFIGURED** | Expected while `PIEZO_CONNECTED false`. After attaching the discs, set it to `true`, re-upload, and tick **Settings → Piezo attached** |
+| Piezo **NOT CONFIGURED** | The sketch has `PIEZO_CONNECTED false`. v3.2 ships with it `true`; re-upload v3.2. (Only with the old v3.1 do you also tick **Settings → Piezo attached**) |
+| Piezo steps never increase | See [Piezo tile: setup and calibration](#-piezo-tile-setup-and-calibration). Check the pin with `PIN_FINDER`, then tune `STEP_JUMP_V` |
 | Link drops | Keep the tab visible, check the cable, and press **Reconnect ESP32** |
 
 </details>
@@ -191,7 +193,7 @@ flowchart LR
     end
 
     subgraph CORE["🧠 ESP32"]
-        ESP["ESP32 DevKit<br/>firmware v3.1"]
+        ESP["ESP32 DevKit<br/>firmware v3.2"]
     end
 
     subgraph STORE["🔋 Storage"]
@@ -231,6 +233,44 @@ flowchart LR
 | GPIO 27 / 14 / 12 | Solar / wind / piezo LEDs | Per-source activity |
 
 </details>
+
+### 👣 Piezo tile: setup and calibration
+
+The piezo discs feed a bridge rectifier that charges a **470 µF capacitor**. A 100k / 22k divider brings the capacitor
+voltage down to the ESP32's range on **GPIO 32 (D32)**, and two red LEDs in series clamp the node. Firmware v3.2 ships
+with `PIEZO_CONNECTED true` and reports `"pz":1`, so the dashboard enables the piezo channel on its own.
+
+```mermaid
+flowchart LR
+    T["👣 Footstep"] --> P["Piezo discs"] --> B["Bridge<br/>4 × 1N4007"] --> C["470 µF cap"]
+    C --> D["100k / 22k divider<br/>(÷ 5.55)"] -->|"GPIO 32"| E["ESP32"]
+    E --> S{"Quick rise above<br/>slow baseline<br/>&gt; STEP_JUMP_V ?"}
+    S -- yes --> N["steps + 1<br/>400 ms lockout"]
+    S -- no --> L["baseline follows<br/>noise and leak"]
+```
+
+**How a step is counted (v3.2):** every 50 ms the firmware averages 32 ADC samples. It counts a step when the capacitor
+voltage jumps **above a slow, roughly 1-second baseline** by more than `STEP_JUMP_V`. A 400 ms lockout makes the press
+and the release of one footstep count as **one** step. Energy is estimated as ½·C·(V₂² − V₁²) for each step. The slow
+leak through the divider (about 1 minute) and ADC noise are never counted as steps.
+
+**Not sure the piezo is on D32? Find the pin:**
+
+1. In the sketch, set `PIN_FINDER = true` and upload.
+2. Open the Serial Monitor at 115200 and tap the tile a few times.
+3. One of the `PINS :` values jumps with each tap. That's your pin. If it isn't D32, set `#define PIEZO_PIN` to it.
+4. Set `PIN_FINDER = false` again and re-upload. Only use input pins that aren't already wired to something.
+
+**Tune the step threshold:**
+
+1. Tap the tile once and read `peak rise` on the `PIEZO :` line. Every second the log shows the largest jump above the baseline.
+2. Set `STEP_JUMP_V` to about **half** of a normal tap's peak rise. The default is 0.08 V.
+3. If steps appear when nobody touches the tile, raise it. If real steps are missed, lower it.
+
+> [!NOTE]
+> A 470 µF capacitor rises only a little per footstep, and the rise per step gets smaller as the capacitor charges.
+> If even a firm stomp shows a peak rise below about 0.03 V, the signal is close to ADC noise. A smaller capacitor
+> (for example 47–100 µF) gives much larger steps.
 
 ### The self-cleaning logic (on the ESP32)
 
@@ -361,7 +401,7 @@ Every status also carries a **confidence** label: **CONFIRMED** (proven by a fir
 
 <br>
 
-- **INA219 (solar):** `ina=0` is CONFIRMED by the firmware. The firmware checks only at boot, though, so the browser cannot see I²C faults that start later. A valid zero current is never treated as a failure.
+- **INA219 (solar):** `ina=0` is CONFIRMED by the firmware. Firmware v3.2 re-checks the sensor every 0.5 s, so a loose wire after boot shows up within a second and blocks the cleaner, and the sensor recovers by itself when reconnected. (v3.1 checked only at boot.) A valid zero current is never treated as a failure.
 - **LDR (light):** a dark room is not a failure. The channel becomes SUSPECTED only if it reads NIGHT for 20 s while the panel makes more than 10 mA. A reading pinned at the bright end, or identical for 5 minutes, is an UNDETERMINED warning and raises no alert.
 - **Wind:** zero output is HEALTHY ("generator output not detected", which is not the same as "no wind"). No reading for 3.5 s is STALE, and for 30 s is SUSPECTED. The value is generator voltage, **not wind speed**.
 - **Piezo:** NOT CONFIGURED unless enabled. Once enabled, quiet periods between footsteps are normal.
@@ -400,7 +440,7 @@ Deep link: `?demo=<number>`, for example **[`?demo=9`](https://mukesh-240.github
 
 | # | Scenario | What it demonstrates |
 |:-:|---|---|
-| 1 | Normal operation | Everything healthy; piezo NOT CONFIGURED exactly like the real build |
+| 1 | Normal operation | Everything healthy; piezo NOT CONFIGURED (as with `PIEZO_CONNECTED false`) |
 | 2 | Strong sunlight | Rays at full strength, high current, no warnings |
 | 3 | Low sunlight | "Low output is consistent with low light". No cleaning suggested |
 | 4 | Possible solar underperformance | Warning, a cleaning that does not help, the shade removed at 40 s, full recovery |
@@ -430,7 +470,7 @@ the console and ignored by the parser).
 
 ```json
 {"ldr":893,"light":"BRIGHT","ina":1,"sV":5.40,"smA":18.0,"smW":97.2,"wV":0.02,"wmW":0.0,
- "cV":0,"steps":0,"puJ":0,"bV":3.83,"bPct":69,"panel":"CLEAN","cycles":0,"smWh":0.27,"wmWh":0}
+ "cV":1.24,"steps":7,"puJ":361.2,"pz":1,"bV":3.83,"bPct":69,"panel":"CLEAN","cycles":0,"smWh":0.27,"wmWh":0}
 ```
 
 | Field | Meaning | Note |
@@ -439,19 +479,27 @@ the console and ignored by the parser).
 | `ina` | INA219 detected (1 / 0) | `0` ⇒ solar fields are placeholders, shown as unavailable |
 | `sV`, `smA`, `smW` | Solar volts, milliamps, milliwatts | Firmware clamps negative current to 0 |
 | `wV`, `wmW` | Wind generator volts; power ≈ V² / 200 Ω | Power is an estimate |
-| `cV`, `steps`, `puJ` | Piezo capacitor volts, steps, energy | Placeholders while `PIEZO_CONNECTED false` |
+| `cV`, `steps`, `puJ` | Piezo capacitor volts, steps, energy | Placeholders while `PIEZO_CONNECTED false`; energy is an estimate |
+| `pz` | Piezo enabled in the firmware (1 / 0) | v3.2 only. Overrides the dashboard's "Piezo attached" setting |
 | `bV`, `bPct` | Battery volts, % estimate | % is recomputed from volts (3.0 V = 0 %, 4.2 V = 100 %) |
 | `panel`, `cycles` | Cleaner state and cycle count | The ESP32 is the source of truth |
 | `smWh`, `wmWh` | Energy integrated by the firmware | mWh |
 
 <details>
-<summary><b>Optional one-line firmware patch</b></summary>
+<summary><b>Firmware versions: what changed in v3.2</b></summary>
 
 <br>
 
-The JSON cannot tell "piezo disabled" apart from "piezo reading 0", so HARVESTIQ uses the **Settings → Piezo attached**
-checkbox. To make this automatic, add `"pz":%d,` after `"puJ":%.1f,` in the JSON `printf` and pass
-`PIEZO_CONNECTED ? 1 : 0` as the matching argument. The dashboard already understands `pz`.
+| | v3.1 (`legacy/multi_energy_harvester_v3_1.ino`) | **v3.2** (`firmware/multi_energy_harvester/`) |
+|---|---|---|
+| Piezo | Off (`PIEZO_CONNECTED false`) | **On**, D32 |
+| Reports whether piezo is enabled | No: tick **Settings → Piezo attached** | **Yes**, `"pz"` flag, no checkbox needed |
+| Step counting | Jump between two 50 ms samples; press + release can count twice | Rise above a slow baseline, 400 ms lockout, 32-sample averaging |
+| INA219 check | Once at boot | Every 0.5 s, auto-recovers; a lost sensor blocks the cleaner |
+| NaN in JSON | Possible | Never |
+| Switches | — | `HUMAN_LOG`, `BOOT_SELF_TEST`, `PIN_FINDER` |
+
+Pins, wiring, JSON field names and the cleaning timings are identical, so the dashboard works with both versions.
 
 </details>
 
@@ -463,7 +511,7 @@ checkbox. To make this automatic, add `"pz":%d,` after `"puJ":%.1f,` in the JSON
 npm test
 ```
 
-**139 tests** run on Node's built-in test runner, with no test framework to install. The `pretest` step rebuilds the
+**140 tests** run on Node's built-in test runner, with no test framework to install. The `pretest` step rebuilds the
 single-file bundle and fails if `dist/` is out of date.
 
 | Area | What is covered |
@@ -497,14 +545,16 @@ harvestiq/
 │   ├── export.js              CSV + printable session report
 │   ├── events.js              event timeline
 │   └── ui/                    app wiring, renderers, animated scene, SVG charts
-├── test/                      139 node:test tests
+├── test/                      140 node:test tests
 ├── firmware/
-│   └── multi_energy_harvester.ino   ESP32 sketch (v3.1)
+│   └── multi_energy_harvester/
+│       └── multi_energy_harvester.ino   ESP32 sketch v3.2 (piezo on D32)
 ├── dist/harvestiq.html        single-file build: double-click to run
 ├── build.mjs                  bundler (~80 lines, no dependencies)
 ├── serve.mjs                  static server for localhost:8080
 ├── docs/images/               README screenshots
-└── legacy/dashboard.html      the original first dashboard, kept for reference
+├── vercel.json                Vercel hosting (serves dist/harvestiq.html at /)
+└── legacy/                    original v3.1 sketch and first dashboard, kept for reference
 ```
 
 ---
@@ -523,7 +573,7 @@ harvestiq/
 5. **Light:** cover the LDR and check for NIGHT, then shine a lamp and check for BRIGHT. Note the raw values, which should match `LDR_BRIGHT` and `LDR_NIGHT` in the sketch.
 6. **Wind:** blow on the propeller. The voltage should go above 0.3 V and the turbine in the scene should spin.
 7. **Battery:** compare the card with a multimeter at the TP4056 B+ terminal. They should agree within about 0.1 V.
-8. **Piezo** (only if the discs are attached): set `PIEZO_CONNECTED true`, re-upload, tick **Settings → Piezo attached**, and step on the tile.
+8. **Piezo:** step on the tile. The step counter should rise by exactly one per footstep. If it doesn't, follow [Piezo tile: setup and calibration](#-piezo-tile-setup-and-calibration) to confirm the pin and tune `STEP_JUMP_V`.
 9. **Calibrate:** set the *Low-output limit* in Settings to the sketch's `DIRTY_MA`.
 10. **Cleaner:** with the lamp on, partially cover the panel. Expect CHECKING → CLEANING (5 s) → COOLDOWN (8 s), then a verification result. A cover that vibration cannot remove will honestly show **NO SIGNIFICANT CHANGE**.
 11. **Failure handling:** unplug the USB cable. Values should switch to "last known" and the timeline should log *Connection lost*. Replug and click **Reconnect**.
@@ -536,7 +586,8 @@ harvestiq/
 ## ⚠️ Known limitations
 
 - The parser follows the firmware source, and the serial transport is tested against a mocked port. **It hasn't yet been validated against the physical ESP32 at length.**
-- The browser cannot see I²C faults that start after boot, the vibration motor's current, or the real wind speed.
+- Firmware v3.2 hasn't been compiled and flashed on the real board yet. Its piezo step detector was checked in a simulation with noise, leakage and press-and-release pulses, but the threshold still needs tuning on the real tile.
+- The browser cannot see the vibration motor's current or the real wind speed.
 - The LDR is an uncalibrated brightness indicator, not an irradiance meter.
 - Low solar current alone does not prove the panel is dirty. Wind power, battery % and piezo energy are estimates.
 - History lives in memory (2 hours at 1 Hz). Use **CSV** export to keep it.
@@ -544,8 +595,8 @@ harvestiq/
 
 ## 🗺️ Possible next steps
 
-- [ ] Have the firmware report `pz` (piezo enabled) so the Settings checkbox is no longer needed
-- [ ] Periodic INA219 re-check in the firmware, so I²C faults that start after boot become visible
+- [x] Have the firmware report `pz` (piezo enabled) so the Settings checkbox is no longer needed (v3.2)
+- [x] Periodic INA219 re-check in the firmware, so I²C faults that start after boot become visible (v3.2)
 - [ ] A current sensor on the motor, so cleaning can be *measured* instead of *reported*
 - [ ] An anemometer, so wind speed can be shown alongside generator voltage
 

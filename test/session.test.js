@@ -193,3 +193,18 @@ test('review 6: a mid-cycle join is reported as insufficient data, not as invali
   feed(s, 3, 8, { smA: 17, panel: 'COOLDOWN', cycles: 1 });
   assert.ok(s.events.all().some((e) => e.title === 'Verification inconclusive: insufficient or invalid sensor data'));
 });
+
+test('firmware v3.2: pz=1 enables the piezo without the setting, and an INA219 lost mid-run is DISCONNECTED, not zero', () => {
+  const s = liveSession(); // default config: "Piezo attached" setting OFF
+  const at = (sec) => T0 + sec * 1000;
+  const next = feed(s, 0, 5, (i) => ({ pz: 1, cV: 0.2 * i, steps: i, puJ: 10 * i }));
+  const piezo = s.healthSnapshot(at(next - 1)).find((c) => c.id === 'piezo');
+  assert.equal(piezo.status, 'HEALTHY');
+  assert.equal(piezo.confidence, 'CONFIRMED');
+  assert.equal(s.latest.piezo.steps, 4);
+
+  feed(s, next, 2, { pz: 1, ina: 0, sV: 0, smA: 0, smW: 0 }); // v3.2 re-check reports the loss
+  const solar = s.healthSnapshot(at(next + 1)).find((c) => c.id === 'solar');
+  assert.equal(solar.status, 'DISCONNECTED');
+  assert.notEqual(s.latest.solar.status, 'AVAILABLE');
+});

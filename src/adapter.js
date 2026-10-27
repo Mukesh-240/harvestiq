@@ -125,7 +125,7 @@ export function normalizeTelemetry(raw, { t, source, config = DEFAULT_CONFIG }) 
   if (!piezoEnabled) {
     piezo = raw.pz === 0
       ? unavailable('The firmware reports the piezo channel is disabled (pz=0)', 'disabled-firmware')
-      : unavailable('Piezo is treated as disabled: the "Piezo attached" setting is off. The firmware JSON does not report PIEZO_CONNECTED, so cV/steps are placeholders', 'disabled-setting');
+      : unavailable('Piezo is treated as disabled: the "Piezo attached" setting is off and the firmware sent no pz flag (v3.1), so cV/steps are placeholders', 'disabled-setting');
   } else {
     const cV = readNumber(raw, 'cV', r.piezoCapV);
     const steps = readNumber(raw, 'steps', r.counter);

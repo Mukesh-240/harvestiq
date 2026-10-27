@@ -80,7 +80,7 @@ const isBad = (t) => t >= 15 && t <= 38 && t % 3 !== 0;
 export const SCENARIOS = Object.freeze([
   {
     id: '1', name: 'Normal operation', length: 60,
-    blurb: 'Healthy solar output in bright light with wind gusts. Every hardware channel healthy; piezo is NOT CONFIGURED, exactly like the real build.',
+    blurb: 'Healthy solar output in bright light with wind gusts. Every hardware channel healthy; piezo is NOT CONFIGURED, as with PIEZO_CONNECTED false.',
     cond: (t) => ({ smA: NORMAL_MA(t) }),
   },
   {

@@ -156,7 +156,7 @@
   <form id="settingsForm" method="dialog">
     <h2>Settings</h2>
     <p class="dialog-note">Values mirror the firmware. If you recalibrate the sketch, update them here. Saved in this browser.</p>
-    <label class="check"><input type="checkbox" name="piezo"> Piezo discs attached <small>Match <code>PIEZO_CONNECTED true</code> in the sketch. The firmware JSON does not report this.</small></label>
+    <label class="check"><input type="checkbox" name="piezo"> Piezo discs attached <small>Only needed with firmware v3.1. Firmware v3.2 reports <code>PIEZO_CONNECTED</code> itself (pz flag) and overrides this.</small></label>
     <label>Low-output limit (mA) <small>Match <code>DIRTY_MA</code></small><input type="number" name="dirtyMa" step="0.1" min="0.1"></label>
     <label>Telemetry stale after (s) <small>Firmware sends ~1 line per second</small><input type="number" name="staleSec" step="0.5" min="2"></label>
     <label>Verification: significant change (mA) <small>Absolute change needed</small><input type="number" name="absMa" step="0.1" min="0.1"></label>

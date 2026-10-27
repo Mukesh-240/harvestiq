@@ -1,6 +1,6 @@
 // Central configuration. Every threshold here is an ASSUMPTION to be calibrated on the real
 // hardware, not a validated engineering limit. `firmware.*` mirrors constants compiled into
-// firmware/multi_energy_harvester.ino v3.1 - keep them in sync if you recalibrate the sketch.
+// firmware/multi_energy_harvester/multi_energy_harvester.ino v3.2 - keep them in sync if you recalibrate the sketch.
 
 const deepFreeze = (obj) => {
   Object.values(obj).forEach((v) => {
@@ -30,7 +30,7 @@ export const DEFAULT_CONFIG = deepFreeze({
   },
 
   // The firmware JSON has no piezo-enabled flag, so this must be set by the operator
-  // (Settings) to match #define PIEZO_CONNECTED. A "pz" field in the JSON overrides it.
+  // (Settings) to match #define PIEZO_CONNECTED (firmware v3.1 only). A "pz" field in the JSON (v3.2) overrides it.
   piezo: { enabled: false },
 
   // Plausibility windows derived from the documented circuit (ADC pin max ~3.1 V, divider

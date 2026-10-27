@@ -215,8 +215,8 @@ export class SensorHealthMonitor {
           current: false,
           note: fromFirmware
             ? 'The firmware reports the piezo channel disabled (pz=0). The dashboard does not treat this as zero output.'
-            : 'Treated as disabled because the "Piezo attached" setting is off. The firmware JSON does not report PIEZO_CONNECTED, so if you enabled it in the sketch, tick the setting. Never shown as zero output.',
-          action: 'Attach the discs, set PIEZO_CONNECTED true, re-upload, and tick "Piezo attached" in Settings.',
+            : 'Treated as disabled because the "Piezo attached" setting is off and the firmware sent no pz flag (firmware v3.1). Firmware v3.2 reports pz itself; with v3.1, tick the setting if PIEZO_CONNECTED is true. Never shown as zero output.',
+          action: 'Set PIEZO_CONNECTED true in the sketch and re-upload (v3.2 reports it automatically; with v3.1 also tick "Piezo attached" in Settings).',
         });
         out.push(ch);
         continue;
@@ -237,7 +237,7 @@ export class SensorHealthMonitor {
       // Time without a valid reading: since its last valid one, or since it first went bad if it was never valid.
       const silentMs = tr.lastValidAt !== null ? t - tr.lastValidAt : t - (tr.faultSince ?? t);
       if (s.kind === 'not-detected') {
-        Object.assign(ch, { status: Health.DISCONNECTED, confidence: Confidence.CONFIRMED, error: 'The firmware reports the INA219 was not detected (ina=0). It only checks at boot, so a failure after boot cannot be seen by the browser.', action: 'Check INA219 VCC/GND and SDA->D21, SCL->D22 (not the screw terminals), then reset the ESP32.' });
+        Object.assign(ch, { status: Health.DISCONNECTED, confidence: Confidence.CONFIRMED, error: 'The firmware reports the INA219 was not detected (ina=0). Firmware v3.2 re-checks it every 0.5 s, so this also covers a sensor lost after boot (v3.1 only checks at boot).', action: 'Check INA219 VCC/GND and SDA->D21, SCL->D22 (not the screw terminals), then reset the ESP32.' });
       } else if (s.kind === 'implausible-low') {
         Object.assign(ch, { status: Health.SUSPECTED, confidence: Confidence.SUSPECTED, error: `${s.reason} This is not an empty battery: the divider or battery is probably not connected.`, action: 'Measure the node with a multimeter; check the two 100k resistors and the TP4056 B+/B- wiring.' });
       } else if (s.status === Status.ERROR) {

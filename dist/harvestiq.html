@@ -694,7 +694,7 @@ circle.p-solar { fill: var(--amber); } circle.p-charge { fill: var(--leaf); } ci
   <form id="settingsForm" method="dialog">
     <h2>Settings</h2>
     <p class="dialog-note">Values mirror the firmware. If you recalibrate the sketch, update them here. Saved in this browser.</p>
-    <label class="check"><input type="checkbox" name="piezo"> Piezo discs attached <small>Match <code>PIEZO_CONNECTED true</code> in the sketch. The firmware JSON does not report this.</small></label>
+    <label class="check"><input type="checkbox" name="piezo"> Piezo discs attached <small>Only needed with firmware v3.1. Firmware v3.2 reports <code>PIEZO_CONNECTED</code> itself (pz flag) and overrides this.</small></label>
     <label>Low-output limit (mA) <small>Match <code>DIRTY_MA</code></small><input type="number" name="dirtyMa" step="0.1" min="0.1"></label>
     <label>Telemetry stale after (s) <small>Firmware sends ~1 line per second</small><input type="number" name="staleSec" step="0.5" min="2"></label>
     <label>Verification: significant change (mA) <small>Absolute change needed</small><input type="number" name="absMa" step="0.1" min="0.1"></label>
@@ -869,7 +869,7 @@ function normalizeTelemetry(raw, { t, source, config = DEFAULT_CONFIG }) {
   if (!piezoEnabled) {
     piezo = raw.pz === 0
       ? unavailable('The firmware reports the piezo channel is disabled (pz=0)', 'disabled-firmware')
-      : unavailable('Piezo is treated as disabled: the "Piezo attached" setting is off. The firmware JSON does not report PIEZO_CONNECTED, so cV/steps are placeholders', 'disabled-setting');
+      : unavailable('Piezo is treated as disabled: the "Piezo attached" setting is off and the firmware sent no pz flag (v3.1), so cV/steps are placeholders', 'disabled-setting');
   } else {
     const cV = readNumber(raw, 'cV', r.piezoCapV);
     const steps = readNumber(raw, 'steps', r.counter);
@@ -951,7 +951,7 @@ __defs["src/config.js"] = function () {
 const __e = {};
 // Central configuration. Every threshold here is an ASSUMPTION to be calibrated on the real
 // hardware, not a validated engineering limit. `firmware.*` mirrors constants compiled into
-// firmware/multi_energy_harvester.ino v3.1 - keep them in sync if you recalibrate the sketch.
+// firmware/multi_energy_harvester/multi_energy_harvester.ino v3.2 - keep them in sync if you recalibrate the sketch.
 
 const deepFreeze = (obj) => {
   Object.values(obj).forEach((v) => {
@@ -981,7 +981,7 @@ const DEFAULT_CONFIG = deepFreeze({
   },
 
   // The firmware JSON has no piezo-enabled flag, so this must be set by the operator
-  // (Settings) to match #define PIEZO_CONNECTED. A "pz" field in the JSON overrides it.
+  // (Settings) to match #define PIEZO_CONNECTED (firmware v3.1 only). A "pz" field in the JSON (v3.2) overrides it.
   piezo: { enabled: false },
 
   // Plausibility windows derived from the documented circuit (ADC pin max ~3.1 V, divider
@@ -1149,7 +1149,7 @@ const isBad = (t) => t >= 15 && t <= 38 && t % 3 !== 0;
 const SCENARIOS = Object.freeze([
   {
     id: '1', name: 'Normal operation', length: 60,
-    blurb: 'Healthy solar output in bright light with wind gusts. Every hardware channel healthy; piezo is NOT CONFIGURED, exactly like the real build.',
+    blurb: 'Healthy solar output in bright light with wind gusts. Every hardware channel healthy; piezo is NOT CONFIGURED, as with PIEZO_CONNECTED false.',
     cond: (t) => ({ smA: NORMAL_MA(t) }),
   },
   {
@@ -1596,7 +1596,7 @@ const RULES = [
     severity: Severity.ERROR,
     match: (sensor) => sensor.kind === 'not-detected',
     title: 'INA219 solar sensor not detected',
-    explanation: 'The firmware reports it could not find the INA219 at boot. Solar output cannot be measured, and it is NOT treated as zero output. The browser cannot see I2C faults that start after boot.',
+    explanation: 'The firmware reports it cannot find the INA219 (v3.2 re-checks every 0.5 s; v3.1 only at boot). Solar output cannot be measured, and it is NOT treated as zero output.',
     action: 'Check INA219 VCC, GND, SDA->D21, SCL->D22 (not the screw terminals), then reset the ESP32.',
   }),
   sensorUnavailableRule({
@@ -1606,10 +1606,10 @@ const RULES = [
     subsystem: 'Piezo',
     severity: Severity.INFO,
     match: (sensor) => String(sensor.kind).startsWith('disabled'),
-    confidence: (sensor) => (sensor.kind === 'disabled-firmware' ? 'CONFIRMED - the firmware reports pz=0' : 'UNDETERMINED - based on the "Piezo attached" setting; the firmware JSON does not report PIEZO_CONNECTED'),
+    confidence: (sensor) => (sensor.kind === 'disabled-firmware' ? 'CONFIRMED - the firmware reports pz=0' : 'UNDETERMINED - based on the "Piezo attached" setting; this firmware sent no pz flag (v3.1)'),
     title: 'Piezo not configured',
     explanation: 'The piezo channel is treated as disabled, so it is shown as NOT CONFIGURED rather than as zero production.',
-    action: 'Attach the piezo discs, set PIEZO_CONNECTED true in the sketch, re-upload, and tick "Piezo attached" in Settings.',
+    action: 'Set PIEZO_CONNECTED true in the sketch and re-upload. Firmware v3.2 reports this itself; with v3.1 also tick "Piezo attached" in Settings.',
   }),
   healthRule('solar', 'Solar'),
   healthRule('light', 'Light'),
@@ -2206,8 +2206,8 @@ class SensorHealthMonitor {
           current: false,
           note: fromFirmware
             ? 'The firmware reports the piezo channel disabled (pz=0). The dashboard does not treat this as zero output.'
-            : 'Treated as disabled because the "Piezo attached" setting is off. The firmware JSON does not report PIEZO_CONNECTED, so if you enabled it in the sketch, tick the setting. Never shown as zero output.',
-          action: 'Attach the discs, set PIEZO_CONNECTED true, re-upload, and tick "Piezo attached" in Settings.',
+            : 'Treated as disabled because the "Piezo attached" setting is off and the firmware sent no pz flag (firmware v3.1). Firmware v3.2 reports pz itself; with v3.1, tick the setting if PIEZO_CONNECTED is true. Never shown as zero output.',
+          action: 'Set PIEZO_CONNECTED true in the sketch and re-upload (v3.2 reports it automatically; with v3.1 also tick "Piezo attached" in Settings).',
         });
         out.push(ch);
         continue;
@@ -2228,7 +2228,7 @@ class SensorHealthMonitor {
       // Time without a valid reading: since its last valid one, or since it first went bad if it was never valid.
       const silentMs = tr.lastValidAt !== null ? t - tr.lastValidAt : t - (tr.faultSince ?? t);
       if (s.kind === 'not-detected') {
-        Object.assign(ch, { status: Health.DISCONNECTED, confidence: Confidence.CONFIRMED, error: 'The firmware reports the INA219 was not detected (ina=0). It only checks at boot, so a failure after boot cannot be seen by the browser.', action: 'Check INA219 VCC/GND and SDA->D21, SCL->D22 (not the screw terminals), then reset the ESP32.' });
+        Object.assign(ch, { status: Health.DISCONNECTED, confidence: Confidence.CONFIRMED, error: 'The firmware reports the INA219 was not detected (ina=0). Firmware v3.2 re-checks it every 0.5 s, so this also covers a sensor lost after boot (v3.1 only checks at boot).', action: 'Check INA219 VCC/GND and SDA->D21, SCL->D22 (not the screw terminals), then reset the ESP32.' });
       } else if (s.kind === 'implausible-low') {
         Object.assign(ch, { status: Health.SUSPECTED, confidence: Confidence.SUSPECTED, error: `${s.reason} This is not an empty battery: the divider or battery is probably not connected.`, action: 'Measure the node with a multimeter; check the two 100k resistors and the TP4056 B+/B- wiring.' });
       } else if (s.status === Status.ERROR) {
