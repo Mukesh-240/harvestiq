@@ -2688,7 +2688,14 @@ class Session {
       this.#emit();
       return;
     }
-    const result = normalizeTelemetry(parsed.data, { t, source: this.mode, config: this.config });
+    // A firmware with no pz flag (older / third-party sketches) still proves the piezo exists once it
+    // reports real values: placeholders are always exactly 0. Remembered, so quiet gaps between steps stay enabled.
+    if (parsed.data.pz === undefined && !this.piezoSeenLive && (parsed.data.cV > 0 || parsed.data.steps > 0)) {
+      this.piezoSeenLive = true;
+      this.events.add({ t, type: 'piezo-detected', severity: Severity.INFO, title: 'Piezo detected from telemetry', detail: 'The ESP32 sent no pz flag but reported non-zero piezo values (cV / steps), so the piezo channel is enabled.' });
+    }
+    const config = this.piezoSeenLive && !this.config.piezo.enabled ? { ...this.config, piezo: { ...this.config.piezo, enabled: true } } : this.config;
+    const result = normalizeTelemetry(parsed.data, { t, source: this.mode, config });
     if (!result.ok) {
       this.counters.rejected += 1;
       this.sensorHealth.onParser('rejected', this.config);

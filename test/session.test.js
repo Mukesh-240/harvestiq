@@ -226,3 +226,20 @@ test('piezo NOT CONFIGURED says which sketch the board is running, from its bann
   assert.match(piezoNote(null).note, /press EN/);
   assert.match(piezoNote('SOLAR + WIND + PIEZO HARVESTER v3.2').note, /not the current v3\.2 file/);
 });
+
+test('a firmware with no pz flag enables the piezo once it reports real values, and keeps it enabled between steps', () => {
+  const s = liveSession();
+  const at = (sec) => T0 + sec * 1000;
+  const piezo = (sec) => s.healthSnapshot(at(sec)).find((c) => c.id === 'piezo');
+
+  feed(s, 0, 3); // placeholders: cV 0, steps 0
+  assert.equal(piezo(2).status, 'NOT CONFIGURED');
+
+  feed(s, 3, 2, { cV: 0.79, steps: 5, puJ: 315.5 });
+  assert.equal(piezo(4).status, 'HEALTHY');
+  assert.equal(s.latest.piezo.steps, 5);
+
+  feed(s, 5, 3, { cV: 0, steps: 5, puJ: 315.5 }); // cap drained, steps stay: must NOT flip back
+  assert.equal(piezo(7).status, 'HEALTHY');
+  assert.equal(s.events.all().filter((e) => e.type === 'piezo-detected').length, 1); // logged once, not every line
+});
