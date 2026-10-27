@@ -24,6 +24,13 @@ const newTracker = () => ({
   railSince: null,
 });
 
+/** Says which sketch the board is running, from the banner line it prints. Used when the piezo shows NOT CONFIGURED. */
+function boardSketchHint(banner) {
+  if (!banner) return 'No sketch banner has been seen on the serial port yet (press EN on the ESP32 to make it print one).';
+  if (/PIEZO HARVESTER v3.2/i.test(banner)) return `The board says "${banner}" but sent no pz flag: the sketch on the board is not the current v3.2 file. Re-upload it.`;
+  return `The board says it is running "${banner}". That sketch has no working piezo support and never sends pz. Upload firmware/multi_energy_harvester/multi_energy_harvester.ino (it prints "SOLAR + WIND + PIEZO HARVESTER v3.2").`;
+}
+
 export class SensorHealthMonitor {
   #trackers = Object.fromEntries(KEYS.map((k) => [k, newTracker()]));
   #parser = [];
@@ -163,7 +170,7 @@ export class SensorHealthMonitor {
    * @returns {object[]} channel health objects
    */
   evaluate(ctx, cfg) {
-    const { t, link, sample } = ctx;
+    const { t, link, sample, firmwareBanner } = ctx;
     const h = cfg.health;
     const stale = cfg.link.staleAfterMs;
     const base = (id, name, gpio) => ({ id, name, gpio, status: Health.UNKNOWN, confidence: Confidence.UNDETERMINED, reading: null, unit: '', lastValidAt: null, ageMs: null, error: null, action: null, note: null, validStreak: 0 });
@@ -214,8 +221,8 @@ export class SensorHealthMonitor {
           reading: null,
           current: false,
           note: fromFirmware
-            ? 'The firmware reports the piezo channel disabled (pz=0). The dashboard does not treat this as zero output.'
-            : 'Treated as disabled because the "Piezo attached" setting is off and the firmware sent no pz flag (firmware v3.1). Firmware v3.2 reports pz itself; with v3.1, tick the setting if PIEZO_CONNECTED is true. Never shown as zero output.',
+            ? 'The firmware reports the piezo channel disabled (pz=0): the sketch on the board has PIEZO_CONNECTED false. The dashboard does not treat this as zero output.'
+            : 'Treated as disabled because the "Piezo attached" setting is off and the firmware sent no pz flag (firmware v3.1). Firmware v3.2 reports pz itself; with v3.1, tick the setting if PIEZO_CONNECTED is true. Never shown as zero output. ' + boardSketchHint(firmwareBanner),
           action: 'Set PIEZO_CONNECTED true in the sketch and re-upload (v3.2 reports it automatically; with v3.1 also tick "Piezo attached" in Settings).',
         });
         out.push(ch);

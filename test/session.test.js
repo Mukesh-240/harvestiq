@@ -208,3 +208,21 @@ test('firmware v3.2: pz=1 enables the piezo without the setting, and an INA219 l
   assert.equal(solar.status, 'DISCONNECTED');
   assert.notEqual(s.latest.solar.status, 'AVAILABLE');
 });
+
+test('piezo NOT CONFIGURED says which sketch the board is running, from its banner line', () => {
+  const at = (sec) => T0 + sec * 1000;
+  const piezoNote = (banner) => {
+    const s = liveSession();
+    if (banner) s.ingestLine(banner, at(0));
+    feed(s, 1, 4); // no pz flag, like the old solar+wind sketch
+    return s.healthSnapshot(at(4)).find((c) => c.id === 'piezo');
+  };
+
+  const old = piezoNote('  SOLAR + WIND HARVESTER + CLEANER');
+  assert.equal(old.status, 'NOT CONFIGURED');
+  assert.match(old.note, /SOLAR \+ WIND HARVESTER \+ CLEANER/);
+  assert.match(old.note, /Upload firmware/);
+
+  assert.match(piezoNote(null).note, /press EN/);
+  assert.match(piezoNote('SOLAR + WIND + PIEZO HARVESTER v3.2').note, /not the current v3\.2 file/);
+});

@@ -74,6 +74,7 @@ export class Session {
     if (parsed.kind === 'text') {
       this.counters.text += 1;
       note('text', parsed.text);
+      if (/HARVESTER/i.test(parsed.text)) this.firmwareBanner = parsed.text.replace(/^[\s=-]+|[\s=-]+$/g, ''); // which sketch is on the board
       this.#emit();
       return;
     }
@@ -219,6 +220,7 @@ export class Session {
       lastTelemetryAt: this.lastTelemetryAt,
       sinceConnectedMs: this.connection.connectedAt === null ? 0 : t - this.connection.connectedAt,
       counters: this.counters,
+      firmwareBanner: this.firmwareBanner,
     };
   }
 
