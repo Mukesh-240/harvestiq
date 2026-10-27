@@ -2674,6 +2674,8 @@ class Session {
       this.counters.text += 1;
       note('text', parsed.text);
       if (/HARVESTER/i.test(parsed.text)) this.firmwareBanner = parsed.text.replace(/^[\s=-]+|[\s=-]+$/g, ''); // which sketch is on the board
+      const pz = /PIEZO\s*:\s*cap\s*([\d.]+)\s*V\s+steps\s+(\d+)\s+(?:energy\s+)?([\d.]+)\s*uJ/i.exec(parsed.text);
+      if (pz) this.piezoText = { t, cV: Number(pz[1]), steps: Number(pz[2]), puJ: Number(pz[3]) };
       this.#emit();
       return;
     }
@@ -2690,12 +2692,23 @@ class Session {
     }
     // A firmware with no pz flag (older / third-party sketches) still proves the piezo exists once it
     // reports real values: placeholders are always exactly 0. Remembered, so quiet gaps between steps stay enabled.
-    if (parsed.data.pz === undefined && !this.piezoSeenLive && (parsed.data.cV > 0 || parsed.data.steps > 0)) {
+    // Some sketches print the piezo only in their readable "PIEZO : cap .. V steps .. energy .. uJ" line and
+    // send placeholder zeros in the JSON. Use the board's own text report from the last 3 s in that case.
+    let data = parsed.data;
+    const txt = this.piezoText;
+    const fromText = data.pz === undefined && !(data.cV > 0 || data.steps > 0) && txt && t - txt.t <= 3000;
+    if (fromText) data = { ...data, cV: txt.cV, steps: txt.steps, puJ: txt.puJ };
+    if (data.pz === undefined && !this.piezoSeenLive && (data.cV > 0 || data.steps > 0)) {
       this.piezoSeenLive = true;
-      this.events.add({ t, type: 'piezo-detected', severity: Severity.INFO, title: 'Piezo detected from telemetry', detail: 'The ESP32 sent no pz flag but reported non-zero piezo values (cV / steps), so the piezo channel is enabled.' });
+      this.events.add({
+        t, type: 'piezo-detected', severity: Severity.INFO, title: 'Piezo detected from telemetry',
+        detail: fromText
+          ? 'The ESP32 JSON carries no piezo values, so they are read from its own "PIEZO :" text line. Add cV/steps/puJ to the sketch JSON to make this exact.'
+          : 'The ESP32 sent no pz flag but reported non-zero piezo values (cV / steps), so the piezo channel is enabled.',
+      });
     }
     const config = this.piezoSeenLive && !this.config.piezo.enabled ? { ...this.config, piezo: { ...this.config.piezo, enabled: true } } : this.config;
-    const result = normalizeTelemetry(parsed.data, { t, source: this.mode, config });
+    const result = normalizeTelemetry(data, { t, source: this.mode, config });
     if (!result.ok) {
       this.counters.rejected += 1;
       this.sensorHealth.onParser('rejected', this.config);

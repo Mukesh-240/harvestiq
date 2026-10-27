@@ -243,3 +243,22 @@ test('a firmware with no pz flag enables the piezo once it reports real values, 
   assert.equal(piezo(7).status, 'HEALTHY');
   assert.equal(s.events.all().filter((e) => e.type === 'piezo-detected').length, 1); // logged once, not every line
 });
+
+test('piezo values printed only in the board\'s "PIEZO :" text line are used when its JSON sends zeros', () => {
+  const s = liveSession();
+  const at = (sec) => T0 + sec * 1000;
+  for (let i = 0; i < 4; i += 1) {
+    s.ingestLine('PIEZO : cap 0.79 V  steps 5  energy 315.5 uJ', at(i));
+    s.ingestLine(line({ cV: 0, steps: 0, puJ: 0 }), at(i)); // JSON placeholders, no pz
+  }
+  const piezo = s.healthSnapshot(at(3)).find((c) => c.id === 'piezo');
+  assert.equal(piezo.status, 'HEALTHY');
+  assert.equal(s.latest.piezo.steps, 5);
+  assert.equal(s.latest.piezo.capVoltageV, 0.79);
+  assert.equal(s.events.all().filter((e) => e.type === 'piezo-detected').length, 1);
+
+  // Real zeros with no recent text line stay placeholders (never invented).
+  const quiet = liveSession();
+  feed(quiet, 0, 4);
+  assert.equal(quiet.healthSnapshot(at(3)).find((c) => c.id === 'piezo').status, 'NOT CONFIGURED');
+});
